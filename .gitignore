@@ -8,3 +8,6 @@ build/
 .eggs/
 *.ply
 *.log
+*.bak
+venv/
+env/
