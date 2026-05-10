@@ -1,0 +1,13 @@
+# ── Core ─────────────────────────────────────────────────────────────────────
+numpy>=1.24
+scipy>=1.11
+opencv-python>=4.8        # SIFT, FLANN, findEssentialMat, solvePnPRansac …
+                          # Use opencv-contrib-python for CUDA SURF (optional)
+
+# ── Optional: GPU acceleration ────────────────────────────────────────────────
+# torch>=2.0              # needed if use_cuda=True (auto-detected)
+# kornia>=0.7             # GPU feature detection via kornia.feature
+# cupy-cuda12x>=12.0      # CuPy for custom CUDA kernels (not currently used)
+
+# ── Optional: point-cloud visualisation ──────────────────────────────────────
+# open3d>=0.17            # viewer only — reconstruction does NOT depend on it
