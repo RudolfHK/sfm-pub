@@ -3,6 +3,7 @@ numpy>=1.24
 scipy>=1.11
 opencv-python>=4.8        # SIFT, FLANN, findEssentialMat, solvePnPRansac …
                           # Use opencv-contrib-python for CUDA SURF (optional)
+Pillow>=9.0               # EXIF focal-length reading (FocalLengthIn35mmFilm)
 
 # ── Optional: GPU acceleration ────────────────────────────────────────────────
 # torch>=2.0              # needed if use_cuda=True (auto-detected)

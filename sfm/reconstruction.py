@@ -8,7 +8,7 @@ Algorithm outline
                          Triangulate inlier matches → initial 3-D point set.
 3.  Register loop      : while unregistered images remain:
       a. Find the image with the most 2-D ↔ 3-D correspondences.
-      b. Register via PnP + RANSAC.
+      b. Register via PnP + RANSAC (undistorted keypoints).
       c. Triangulate new 3-D points with every already-registered neighbour.
       d. Run Bundle Adjustment every `ba_interval` new cameras.
 4.  Final BA.
@@ -19,6 +19,8 @@ cameras    : {img_idx: {'R':(3,3), 't':(3,1), 'K':(3,3)}}
 points_3d  : list of (3,) float64 arrays      (index = pt_3d_idx)
 kp_to_3d   : {(img_idx, kp_idx): pt_3d_idx}
 observations: list of (img_idx, pt_3d_idx, x, y)   used by BA
+             x, y are the ORIGINAL (distorted) pixel coordinates so that
+             the BA projection model can apply and refine radial distortion.
 """
 
 import logging
@@ -28,7 +30,7 @@ import cv2
 import numpy as np
 
 from .bundle_adjustment import BundleAdjuster
-from .utils import camera_center, projection_matrix, reprojection_error
+from .utils import camera_center, projection_matrix, reprojection_error, undistort_points
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +84,30 @@ class IncrementalSfM:
         K: np.ndarray,
         max_reproj_error: float = 4.0,
         ba_interval: int = 5,
+        dist_coeffs: Optional[np.ndarray] = None,
+        refine_intrinsics: bool = True,
     ) -> None:
         self.features        = features
         self.verified_pairs  = verified_pairs
-        self.K               = K
+        self.K               = K.copy()
         self.max_reproj_err  = max_reproj_error
         self.ba_interval     = ba_interval
+        self.refine_intrinsics = refine_intrinsics
+
+        if dist_coeffs is None:
+            self.dist_coeffs = np.zeros(4, dtype=np.float64)
+        else:
+            self.dist_coeffs = np.asarray(dist_coeffs, dtype=np.float64).ravel()
+
+        # Pre-compute undistorted keypoints for PnP / triangulation.
+        # Observations for BA keep the ORIGINAL distorted pixel coordinates.
+        self._undist_kps: Dict[int, np.ndarray] = {}
+        for img_idx, feat in features.items():
+            kps = feat["keypoints"].astype(np.float64)
+            if np.any(self.dist_coeffs != 0):
+                self._undist_kps[img_idx] = undistort_points(kps, self.K, self.dist_coeffs)
+            else:
+                self._undist_kps[img_idx] = kps
 
         # Reconstruction state
         self.cameras:      Dict[int, dict]            = {}
@@ -196,22 +216,29 @@ class IncrementalSfM:
         C_i = camera_center(R_i, t_i)
         C_j = camera_center(R_j, t_j)
 
-        kps_i = self.features[i]["keypoints"]
-        kps_j = self.features[j]["keypoints"]
+        # Undistorted kps for geometric computations
+        kps_i_ud = self._undist_kps[i]
+        kps_j_ud = self._undist_kps[j]
+        # Original distorted kps for observation storage (BA)
+        kps_i_orig = self.features[i]["keypoints"]
+        kps_j_orig = self.features[j]["keypoints"]
 
         for match in data["inlier_matches"]:
             ki, kj = int(match[0]), int(match[1])
-            pt1, pt2 = kps_i[ki], kps_j[kj]
+            pt1_ud = kps_i_ud[ki]
+            pt2_ud = kps_j_ud[kj]
 
-            X = _triangulate_dlt(P_i, P_j, pt1, pt2)
+            X = _triangulate_dlt(P_i, P_j, pt1_ud, pt2_ud)
             if X is None:
                 continue
-            if not self._accept_point(X, R_i, t_i, R_j, t_j, pt1, pt2, C_i, C_j):
+            if not self._accept_point(X, R_i, t_i, R_j, t_j, pt1_ud, pt2_ud, C_i, C_j):
                 continue
 
-            idx = self._add_point(X, i, ki, pt1)
+            orig_pt1 = kps_i_orig[ki].astype(np.float64)
+            orig_pt2 = kps_j_orig[kj].astype(np.float64)
+            idx = self._add_point(X, i, ki, orig_pt1)
             self._link_kp(j, kj, idx)
-            self._add_obs(j, idx, pt2)
+            self._add_obs(j, idx, orig_pt2)
 
     # ── next-image selection ──────────────────────────────────────────────
 
@@ -246,17 +273,17 @@ class IncrementalSfM:
     # ── image registration ────────────────────────────────────────────────
 
     def _register_image(self, img_idx: int) -> bool:
-        pts2d, pts3d, kp_idxs, pt3d_idxs = self._get_corr(img_idx)
-        if len(pts2d) < 6:
-            logger.debug(f"  Insufficient correspondences: {len(pts2d)}")
+        # PnP uses undistorted 2D points with the camera matrix (no dist needed)
+        pts2d_ud, pts3d, kp_idxs, pt3d_idxs = self._get_corr(img_idx)
+        if len(pts2d_ud) < 6:
+            logger.debug(f"  Insufficient correspondences: {len(pts2d_ud)}")
             return False
 
-        dist = np.zeros(4, dtype=np.float64)
         ok, rvec, tvec, inliers = cv2.solvePnPRansac(
             pts3d.reshape(-1, 1, 3),
-            pts2d.reshape(-1, 1, 2),
+            pts2d_ud.reshape(-1, 1, 2),
             self.K,
-            dist,
+            self.dist_coeffs,
             confidence=0.999,
             reprojectionError=self.max_reproj_err,
             iterationsCount=1000,
@@ -281,28 +308,29 @@ class IncrementalSfM:
 
         self.cameras[img_idx] = {"R": R, "t": t, "K": self.K}
 
+        orig_kps = self.features[img_idx]["keypoints"]
         for ci in inliers.flatten():
             ki      = kp_idxs[ci]
             pt3d_i  = pt3d_idxs[ci]
-            pt2d    = pts2d[ci]
+            orig_pt = orig_kps[ki].astype(np.float64)
             if (img_idx, ki) not in self.kp_to_3d:
                 self.kp_to_3d[(img_idx, ki)] = pt3d_i
-            self._add_obs(img_idx, pt3d_i, pt2d)
+            self._add_obs(img_idx, pt3d_i, orig_pt)
 
-        logger.debug(f"  PnP inliers: {len(inliers)}/{len(pts2d)}")
+        logger.debug(f"  PnP inliers: {len(inliers)}/{len(pts2d_ud)}")
         return True
 
     def _get_corr(
         self, img_idx: int
     ) -> Tuple[np.ndarray, np.ndarray, list, list]:
         """
-        Collect 2-D ↔ 3-D correspondences for PnP.
+        Collect 2-D (undistorted) ↔ 3-D correspondences for PnP.
 
-        Returns pts2d (M,2), pts3d (M,3), kp_indices, pt3d_indices.
+        Returns pts2d_ud (M,2), pts3d (M,3), kp_indices, pt3d_indices.
         """
         pts2d_l, pts3d_l, kp_l, pt3d_l = [], [], [], []
         seen_pt3d: Set[int] = set()
-        kps = self.features[img_idx]["keypoints"]
+        kps_ud = self._undist_kps[img_idx]
 
         for (i, j), data in self.verified_pairs.items():
             other, self_col, other_col = self._pair_roles(img_idx, i, j)
@@ -317,7 +345,7 @@ class IncrementalSfM:
                 if pt3d_idx in seen_pt3d:
                     continue
                 seen_pt3d.add(pt3d_idx)
-                pts2d_l.append(kps[ks].astype(np.float64))
+                pts2d_l.append(kps_ud[ks].astype(np.float64))
                 pts3d_l.append(self.points_3d[pt3d_idx])
                 kp_l.append(ks)
                 pt3d_l.append(pt3d_idx)
@@ -344,7 +372,8 @@ class IncrementalSfM:
         t_n = self.cameras[new_idx]["t"]
         P_n = projection_matrix(self.K, R_n, t_n)
         C_n = camera_center(R_n, t_n)
-        kps_n = self.features[new_idx]["keypoints"]
+        kps_n_ud   = self._undist_kps[new_idx]
+        kps_n_orig = self.features[new_idx]["keypoints"]
         n_new = 0
 
         for (i, j), data in self.verified_pairs.items():
@@ -356,7 +385,8 @@ class IncrementalSfM:
             t_o  = self.cameras[other]["t"]
             P_o  = projection_matrix(self.K, R_o, t_o)
             C_o  = camera_center(R_o, t_o)
-            kps_o = self.features[other]["keypoints"]
+            kps_o_ud   = self._undist_kps[other]
+            kps_o_orig = self.features[other]["keypoints"]
 
             for m in data["inlier_matches"]:
                 ks = int(m[self_col])
@@ -367,24 +397,26 @@ class IncrementalSfM:
                     if (new_idx, ks) not in self.kp_to_3d:
                         pt3d_idx = self.kp_to_3d[(other, ko)]
                         self._link_kp(new_idx, ks, pt3d_idx)
-                        self._add_obs(new_idx, pt3d_idx, kps_n[ks])
+                        self._add_obs(new_idx, pt3d_idx, kps_n_orig[ks].astype(np.float64))
                     continue
 
                 # Both unassigned — triangulate a new point
                 if (new_idx, ks) in self.kp_to_3d:
                     continue
 
-                pt_n = kps_n[ks]
-                pt_o = kps_o[ko]
-                X = _triangulate_dlt(P_n, P_o, pt_n, pt_o)
+                pt_n_ud = kps_n_ud[ks]
+                pt_o_ud = kps_o_ud[ko]
+                X = _triangulate_dlt(P_n, P_o, pt_n_ud, pt_o_ud)
                 if X is None:
                     continue
-                if not self._accept_point(X, R_n, t_n, R_o, t_o, pt_n, pt_o, C_n, C_o):
+                if not self._accept_point(X, R_n, t_n, R_o, t_o, pt_n_ud, pt_o_ud, C_n, C_o):
                     continue
 
-                idx = self._add_point(X, new_idx, ks, pt_n)
+                pt_n_orig = kps_n_orig[ks].astype(np.float64)
+                pt_o_orig = kps_o_orig[ko].astype(np.float64)
+                idx = self._add_point(X, new_idx, ks, pt_n_orig)
                 self._link_kp(other, ko, idx)
-                self._add_obs(other, idx, pt_o)
+                self._add_obs(other, idx, pt_o_orig)
                 n_new += 1
 
         return n_new
@@ -410,7 +442,7 @@ class IncrementalSfM:
         if not _triangulation_angle_ok(X, C1, C2):
             return False
 
-        # Reprojection error below threshold
+        # Reprojection error below threshold (uses undistorted pts + pinhole)
         if (
             reprojection_error(X, pt1, self.K, R1, t1) > self.max_reproj_err
             or reprojection_error(X, pt2, self.K, R2, t2) > self.max_reproj_err
@@ -426,6 +458,10 @@ class IncrementalSfM:
         Remove 3-D points whose mean reprojection error exceeds the threshold.
         Rebuilds self.points_3d, self.observations, and self.kp_to_3d with
         remapped indices.
+
+        Note: reprojection_error uses the standard pinhole model on the stored
+        (distorted) observation coordinates.  The error is slightly off when
+        k1/k2 ≠ 0, but is accurate enough for outlier filtering purposes.
         """
         n = len(self.points_3d)
         if n == 0:
@@ -490,11 +526,25 @@ class IncrementalSfM:
             return
 
         pts_arr = np.array(self.points_3d, dtype=np.float64)
-        updated_cams, updated_pts = self._ba.adjust(
-            self.cameras, pts_arr, self.observations, self.K
+        updated_cams, updated_pts, K_ref, dist_ref = self._ba.adjust(
+            self.cameras, pts_arr, self.observations, self.K,
+            dist_coeffs=self.dist_coeffs,
+            refine_intrinsics=self.refine_intrinsics,
         )
         self.cameras   = updated_cams
         self.points_3d = [updated_pts[i] for i in range(len(updated_pts))]
+
+        if K_ref is not None:
+            self.K = K_ref
+            self.dist_coeffs = dist_ref
+            # Re-compute undistorted keypoints with refined distortion so that
+            # subsequent PnP calls use accurate undistortion.
+            if np.any(dist_ref != 0):
+                for img_idx in self.features:
+                    kps = self.features[img_idx]["keypoints"].astype(np.float64)
+                    self._undist_kps[img_idx] = undistort_points(
+                        kps, self.K, self.dist_coeffs
+                    )
 
     # ── small utilities ───────────────────────────────────────────────────
 

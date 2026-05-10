@@ -21,6 +21,8 @@ from typing import Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from .utils import undistort_points
+
 logger = logging.getLogger(__name__)
 
 # Pick best available F-estimation method.
@@ -64,6 +66,7 @@ class GeometricVerifier:
         kps2: np.ndarray,
         matches: np.ndarray,
         K: np.ndarray,
+        dist_coeffs: Optional[np.ndarray] = None,
     ) -> Optional[dict]:
         """
         Verify one matched pair.
@@ -83,6 +86,11 @@ class GeometricVerifier:
 
         pts1 = kps1[matches[:, 0]].astype(np.float64)  # (M, 2)
         pts2 = kps2[matches[:, 1]].astype(np.float64)
+
+        # Undistort before RANSAC when distortion coefficients are available
+        if dist_coeffs is not None and np.any(dist_coeffs != 0):
+            pts1 = undistort_points(pts1, K, dist_coeffs)
+            pts2 = undistort_points(pts2, K, dist_coeffs)
 
         # ── Fundamental matrix ────────────────────────────────────────────
         try:
@@ -173,6 +181,7 @@ class GeometricVerifier:
         features: dict,
         all_matches: dict,
         K: np.ndarray,
+        dist_coeffs: Optional[np.ndarray] = None,
     ) -> VerifiedDict:
         """
         Verify every matched pair.
@@ -191,6 +200,7 @@ class GeometricVerifier:
                 features[j]["keypoints"],
                 matches,
                 K,
+                dist_coeffs=dist_coeffs,
             )
             if result is not None:
                 verified[(i, j)] = result

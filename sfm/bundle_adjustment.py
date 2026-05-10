@@ -6,19 +6,40 @@ points jointly, with a robust Huber loss to down-weight outliers.
 
 Parameter vector layout
 -----------------------
-  [  cam_0_rvec(3)  cam_0_tvec(3)  |  ...  |  cam_{C-1}_rvec  cam_{C-1}_tvec  |
-     X_0(3)  X_1(3)  ...  X_{P-1}(3)  ]
+  refine_intrinsics=True (default):
+    [ f(1)  k1(1)  k2(1) |
+      cam_0_rvec(3)  cam_0_tvec(3) | … | cam_{C-1}_rvec  cam_{C-1}_tvec |
+      X_0(3)  X_1(3)  …  X_{P-1}(3) ]
 
-Total length = 6*C + 3*P
+    Total length = 3 + 6*C + 3*P   (N_SHARED = 3)
+
+  refine_intrinsics=False:
+    [ cam_0_rvec(3)  cam_0_tvec(3) | … | X_0(3) … ]
+
+    Total length = 6*C + 3*P        (N_SHARED = 0)
+
+Projection model
+----------------
+  Radial distortion (Brown–Conrady, 2 coefficients):
+
+    X_cam = R * X_world + t
+    xn = X_cam[0] / X_cam[2],  yn = X_cam[1] / X_cam[2]
+    r² = xn² + yn²
+    u  = f * xn * (1 + k1*r² + k2*r⁴) + cx
+    v  = f * yn * (1 + k1*r² + k2*r⁴) + cy
+
+  Assumes square pixels (fx = fy = f) and principal point at image centre.
+  When k1 = k2 = 0 this reduces to the standard pinhole model.
 
 Observation convention
 -----------------------
-  (camera_idx, point_idx, x_obs, y_obs)   — camera_idx and point_idx are the
+  (camera_idx, point_idx, x_obs, y_obs)  — camera_idx and point_idx are the
   *consecutive* indices used inside BA (not the original image indices).
+  x_obs / y_obs are the *original distorted* pixel coordinates.
 """
 
 import logging
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -59,25 +80,30 @@ def _rodrigues_rotate_batch(rvecs: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return rotated
 
 
-# ─── Vectorised projection ───────────────────────────────────────────────────
+# ─── Distortion-aware projection ─────────────────────────────────────────────
 
-def _project_batch(
+def _project_distorted(
     cam_params: np.ndarray,
     pts_3d: np.ndarray,
-    K: np.ndarray,
+    f: float,
+    k1: float,
+    k2: float,
+    cx: float,
+    cy: float,
 ) -> np.ndarray:
     """
-    Project N 3-D points through N cameras (one camera per point).
+    Project N 3-D points through N cameras with radial distortion.
 
     Parameters
     ----------
     cam_params : (N, 6)  [rvec(3) | tvec(3)] per observation
     pts_3d     : (N, 3)
-    K          : (3, 3)  shared intrinsics
+    f, k1, k2  : shared intrinsics (single focal; k1/k2 Brown–Conrady)
+    cx, cy     : fixed principal point
 
     Returns
     -------
-    projected : (N, 2)   — uses z_safe to avoid ±inf during optimisation
+    projected : (N, 2)
     """
     rvecs = cam_params[:, :3]
     tvecs = cam_params[:, 3:6]
@@ -86,61 +112,87 @@ def _project_batch(
 
     z_safe = np.where(X_cam[:, 2] > 1e-6, X_cam[:, 2], 1e-6)
 
-    x_proj = K[0, 0] * X_cam[:, 0] / z_safe + K[0, 2]
-    y_proj = K[1, 1] * X_cam[:, 1] / z_safe + K[1, 2]
+    xn = X_cam[:, 0] / z_safe
+    yn = X_cam[:, 1] / z_safe
+    r2 = xn ** 2 + yn ** 2
+    dist_factor = 1.0 + k1 * r2 + k2 * r2 ** 2
 
-    return np.stack([x_proj, y_proj], axis=1)                # (N,2)
+    u = f * xn * dist_factor + cx
+    v = f * yn * dist_factor + cy
+
+    return np.stack([u, v], axis=1)                          # (N,2)
 
 
 # ─── Residual function ───────────────────────────────────────────────────────
 
-def _residuals(
+def _residuals_v2(
     params: np.ndarray,
     n_cameras: int,
     n_points: int,
     cam_indices: np.ndarray,
     pt_indices: np.ndarray,
     pts_2d: np.ndarray,
-    K: np.ndarray,
+    cx: float,
+    cy: float,
+    refine_intrinsics: bool,
+    f_fixed: float,
+    k1_fixed: float,
+    k2_fixed: float,
 ) -> np.ndarray:
-    cam_params = params[: n_cameras * 6].reshape(n_cameras, 6)
-    pts3d      = params[n_cameras * 6 :].reshape(n_points, 3)
+    if refine_intrinsics:
+        f, k1, k2 = params[0], params[1], params[2]
+        off = 3
+    else:
+        f, k1, k2 = f_fixed, k1_fixed, k2_fixed
+        off = 0
 
-    obs_cam = cam_params[cam_indices]   # (n_obs, 6)
-    obs_pts = pts3d[pt_indices]         # (n_obs, 3)
+    cam_params = params[off : off + n_cameras * 6].reshape(n_cameras, 6)
+    pts3d      = params[off + n_cameras * 6 :].reshape(n_points, 3)
 
-    projected = _project_batch(obs_cam, obs_pts, K)          # (n_obs, 2)
-    return (projected - pts_2d).ravel()                      # (2*n_obs,)
+    obs_cam = cam_params[cam_indices]
+    obs_pts = pts3d[pt_indices]
+
+    projected = _project_distorted(obs_cam, obs_pts, f, k1, k2, cx, cy)
+    return (projected - pts_2d).ravel()
 
 
 # ─── Sparsity pattern ────────────────────────────────────────────────────────
 
-def _build_sparsity(
+def _build_sparsity_v2(
     n_cameras: int,
     n_points: int,
     cam_indices: np.ndarray,
     pt_indices: np.ndarray,
+    refine_intrinsics: bool,
 ) -> "scipy.sparse.csr_matrix":
     n_obs    = len(cam_indices)
-    n_params = n_cameras * 6 + n_points * 3
+    n_shared = 3 if refine_intrinsics else 0
+    n_params = n_shared + n_cameras * 6 + n_points * 3
     n_res    = n_obs * 2
 
     J = lil_matrix((n_res, n_params), dtype=np.int8)
 
-    rows = np.repeat(np.arange(n_obs), 2)   # [0,0,1,1,2,2,...] for pairs
-    # Actually it's easier with explicit loops for clarity; still O(n_obs)
     for k in range(n_obs):
         c = int(cam_indices[k])
         p = int(pt_indices[k])
 
-        # Camera pose (6 params)
-        J[2 * k,     c * 6 : c * 6 + 6] = 1
-        J[2 * k + 1, c * 6 : c * 6 + 6] = 1
+        row_x = 2 * k
+        row_y = 2 * k + 1
 
-        # 3-D point (3 params)
-        base = n_cameras * 6 + p * 3
-        J[2 * k,     base : base + 3] = 1
-        J[2 * k + 1, base : base + 3] = 1
+        # Shared intrinsics (dense columns — every residual touches f, k1, k2)
+        if refine_intrinsics:
+            J[row_x, 0:3] = 1
+            J[row_y, 0:3] = 1
+
+        # Camera pose block (6 params)
+        cam_start = n_shared + c * 6
+        J[row_x, cam_start : cam_start + 6] = 1
+        J[row_y, cam_start : cam_start + 6] = 1
+
+        # 3-D point block (3 params)
+        pt_start = n_shared + n_cameras * 6 + p * 3
+        J[row_x, pt_start : pt_start + 3] = 1
+        J[row_y, pt_start : pt_start + 3] = 1
 
     return J.tocsr()
 
@@ -181,24 +233,42 @@ class BundleAdjuster:
         points_3d: np.ndarray,
         observations: list,
         K: np.ndarray,
-    ) -> Tuple[dict, np.ndarray]:
+        dist_coeffs: Optional[np.ndarray] = None,
+        refine_intrinsics: bool = True,
+    ) -> Tuple[dict, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """
         Run bundle adjustment.
 
         Parameters
         ----------
-        cameras      : {img_idx: {'R':(3,3), 't':(3,1), 'K':(3,3)}}
-        points_3d    : (P, 3) float64
-        observations : list of (img_idx, pt_3d_idx, x_obs, y_obs)
-        K            : (3, 3) shared intrinsics
+        cameras           : {img_idx: {'R':(3,3), 't':(3,1), 'K':(3,3)}}
+        points_3d         : (P, 3) float64
+        observations      : list of (img_idx, pt_3d_idx, x_obs, y_obs)
+                            x_obs/y_obs are the original (distorted) pixel coords.
+        K                 : (3, 3) shared intrinsics
+        dist_coeffs       : (4,) or (5,) [k1, k2, p1, p2[, k3]]; None → zeros
+        refine_intrinsics : If True, jointly optimise f, k1, k2 with pose/points.
 
         Returns
         -------
-        updated_cameras, updated_points_3d
+        updated_cameras   : same structure as input
+        updated_points_3d : (P, 3) float64
+        K_refined         : updated K if refine_intrinsics else None
+        dist_refined      : updated (4,) dist if refine_intrinsics else None
         """
         if not cameras or len(points_3d) == 0 or not observations:
             logger.warning("BA: nothing to adjust.")
-            return cameras, points_3d
+            return cameras, points_3d, None, None
+
+        if dist_coeffs is None:
+            dist_coeffs = np.zeros(4, dtype=np.float64)
+        dist_coeffs = np.asarray(dist_coeffs, dtype=np.float64).ravel()
+        k1_init = float(dist_coeffs[0]) if len(dist_coeffs) > 0 else 0.0
+        k2_init = float(dist_coeffs[1]) if len(dist_coeffs) > 1 else 0.0
+
+        cx = float(K[0, 2])
+        cy = float(K[1, 2])
+        f_init = float(K[0, 0])
 
         # Build consecutive index maps
         cam_list   = sorted(cameras.keys())
@@ -213,7 +283,7 @@ class BundleAdjuster:
         ]
         if len(valid_obs) < 8:
             logger.warning(f"BA: only {len(valid_obs)} valid observations — skipped.")
-            return cameras, points_3d
+            return cameras, points_3d, None, None
 
         cam_indices = np.array([cam_to_idx[o[0]] for o in valid_obs], dtype=np.int32)
         pt_indices  = np.array([o[1]             for o in valid_obs], dtype=np.int32)
@@ -226,26 +296,45 @@ class BundleAdjuster:
             cam_params_init[c_idx, :3] = rvec.flatten()
             cam_params_init[c_idx, 3:] = cameras[c_key]["t"].flatten()
 
-        x0 = np.concatenate([cam_params_init.ravel(), points_3d.ravel()])
+        if refine_intrinsics:
+            x0 = np.concatenate([
+                [f_init, k1_init, k2_init],
+                cam_params_init.ravel(),
+                points_3d.ravel(),
+            ])
+            # Bounds: f ∈ [0.5f, 2f], k1/k2 ∈ [-2, 2], poses/pts unconstrained
+            lb = np.full_like(x0, -np.inf)
+            ub = np.full_like(x0,  np.inf)
+            lb[0] = 0.5 * f_init;  ub[0] = 2.0 * f_init
+            lb[1] = -2.0;          ub[1] = 2.0
+            lb[2] = -2.0;          ub[2] = 2.0
+            bounds = (lb, ub)
+        else:
+            x0 = np.concatenate([cam_params_init.ravel(), points_3d.ravel()])
+            bounds = (-np.inf, np.inf)
 
-        res_init = _residuals(x0, n_cameras, n_points, cam_indices, pt_indices, pts_2d, K)
+        def fun(params):
+            return _residuals_v2(
+                params, n_cameras, n_points, cam_indices, pt_indices, pts_2d,
+                cx, cy, refine_intrinsics, f_init, k1_init, k2_init,
+            )
+
+        res_init  = fun(x0)
         rmse_init = float(np.sqrt(np.nanmean(res_init ** 2)))
         logger.info(
             f"  BA  init RMSE: {rmse_init:.3f} px  "
             f"({n_cameras} cams, {n_points} pts, {len(valid_obs)} obs)"
         )
 
-        J_sparse = _build_sparsity(n_cameras, n_points, cam_indices, pt_indices)
-
-        def fun(params):
-            return _residuals(
-                params, n_cameras, n_points, cam_indices, pt_indices, pts_2d, K
-            )
+        J_sparse = _build_sparsity_v2(
+            n_cameras, n_points, cam_indices, pt_indices, refine_intrinsics
+        )
 
         try:
             result = least_squares(
                 fun,
                 x0,
+                bounds=bounds,
                 jac_sparsity=J_sparse,
                 method="trf",
                 loss=self.loss,
@@ -258,10 +347,9 @@ class BundleAdjuster:
             )
         except Exception as exc:
             logger.error(f"BA optimisation failed: {exc}")
-            return cameras, points_3d
+            return cameras, points_3d, None, None
 
-        res_final = result.fun
-        rmse_final = float(np.sqrt(np.nanmean(res_final ** 2)))
+        rmse_final = float(np.sqrt(np.nanmean(result.fun ** 2)))
         logger.info(
             f"  BA final RMSE: {rmse_final:.3f} px  "
             f"(cost={result.cost:.4f}, {result.message})"
@@ -270,12 +358,19 @@ class BundleAdjuster:
         # Guard: reject if BA diverged
         if rmse_final > rmse_init * 3.0:
             logger.warning("BA diverged — reverting to initial parameters.")
-            return cameras, points_3d
+            return cameras, points_3d, None, None
 
         # Unpack optimised parameters
         opt = result.x
-        opt_cam  = opt[: n_cameras * 6].reshape(n_cameras, 6)
-        opt_pts  = opt[n_cameras * 6 :].reshape(n_points, 3)
+        if refine_intrinsics:
+            f_opt, k1_opt, k2_opt = opt[0], opt[1], opt[2]
+            off = 3
+        else:
+            f_opt, k1_opt, k2_opt = f_init, k1_init, k2_init
+            off = 0
+
+        opt_cam = opt[off : off + n_cameras * 6].reshape(n_cameras, 6)
+        opt_pts = opt[off + n_cameras * 6 :].reshape(n_points, 3)
 
         updated_cameras = dict(cameras)
         for c_key, c_idx in cam_to_idx.items():
@@ -288,4 +383,20 @@ class BundleAdjuster:
                 "K": cameras[c_key]["K"],
             }
 
-        return updated_cameras, opt_pts.astype(np.float64)
+        # Build refined K and dist if intrinsics were optimised
+        K_refined   = None
+        dist_refined = None
+        if refine_intrinsics:
+            if abs(f_opt - f_init) / f_init > 0.005 or abs(k1_opt) > 1e-4 or abs(k2_opt) > 1e-4:
+                K_refined = K.copy()
+                K_refined[0, 0] = f_opt
+                K_refined[1, 1] = f_opt
+                dist_out = np.zeros(max(len(dist_coeffs), 4), dtype=np.float64)
+                dist_out[0] = k1_opt
+                dist_out[1] = k2_opt
+                dist_refined = dist_out
+                logger.info(
+                    f"  BA refined: f={f_opt:.1f}  k1={k1_opt:.5f}  k2={k2_opt:.5f}"
+                )
+
+        return updated_cameras, opt_pts.astype(np.float64), K_refined, dist_refined

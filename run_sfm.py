@@ -29,14 +29,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--output", default="output.ply",
-        help="Output PLY file path.",
+        help="Output PLY file path (sparse cloud, or dense when --dense is set).",
     )
     # Feature extraction
     p.add_argument(
         "--n_features", type=int, default=8_000,
         help="Max SIFT features extracted per image.",
     )
-    # Matching
+    # Matching strategy
+    p.add_argument(
+        "--match_strategy",
+        choices=["exhaustive", "sequential", "vocab_tree"],
+        default="exhaustive",
+        help=(
+            "Pairwise matching strategy.  "
+            "'exhaustive' = O(N²) all pairs; "
+            "'sequential' = sliding window; "
+            "'vocab_tree' = bag-of-words retrieval."
+        ),
+    )
+    p.add_argument(
+        "--sequential_window", type=int, default=5,
+        help="Window size for sequential matching (images i vs i+1 … i+W).",
+    )
+    p.add_argument(
+        "--vocab_words", type=int, default=256,
+        help="Vocabulary size for vocab_tree matching.",
+    )
+    p.add_argument(
+        "--vocab_top_k", type=int, default=10,
+        help="Number of nearest-neighbour images retrieved per query (vocab_tree).",
+    )
     p.add_argument(
         "--ratio", type=float, default=0.75,
         help="Lowe's ratio-test threshold (lower = stricter).",
@@ -63,10 +86,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--ba_interval", type=int, default=5,
         help="Run bundle adjustment every N newly registered cameras.",
     )
+    p.add_argument(
+        "--no_refine_intrinsics", action="store_true",
+        help=(
+            "Disable joint focal-length and radial-distortion (k1, k2) "
+            "refinement in bundle adjustment.  Use when the camera is "
+            "pre-calibrated or for speed."
+        ),
+    )
+    # MVS densification
+    p.add_argument(
+        "--dense", action="store_true",
+        help=(
+            "Run MVS densification (StereoSGBM) after sparse reconstruction "
+            "and save the dense + sparse point cloud."
+        ),
+    )
+    p.add_argument(
+        "--dense_output", default=None,
+        help=(
+            "Output PLY path for the dense cloud.  "
+            "Defaults to <output_stem>_dense.ply."
+        ),
+    )
     # Export
     p.add_argument(
         "--no_filter", action="store_true",
-        help="Skip statistical outlier filtering of the final point cloud.",
+        help="Skip statistical outlier filtering of the final sparse point cloud.",
     )
     # Misc
     p.add_argument(
@@ -90,12 +136,13 @@ def main(argv=None) -> int:
     t_total = time.time()
 
     # ── Imports (deferred so --help is instant) ───────────────────────────
-    from sfm.feature_extraction   import FeatureExtractor
-    from sfm.feature_matching     import FeatureMatcher
+    from sfm.feature_extraction    import FeatureExtractor
+    from sfm.feature_matching      import FeatureMatcher, SequentialMatcher, VocabTreeMatcher
     from sfm.geometric_verification import GeometricVerifier
-    from sfm.reconstruction       import IncrementalSfM
-    from sfm.point_cloud          import PointCloudExporter
-    from sfm.utils                import list_images, load_image, estimate_intrinsics
+    from sfm.reconstruction        import IncrementalSfM
+    from sfm.point_cloud           import PointCloudExporter
+    from sfm.utils                 import list_images, load_image, estimate_intrinsics
+    import numpy as np
 
     # ─────────────────────────────────────────────────────────────────────
     # Stage 1 — Discover images & estimate intrinsics
@@ -112,9 +159,10 @@ def main(argv=None) -> int:
         return 1
 
     sample = load_image(image_paths[0])
-    K = estimate_intrinsics(sample.shape)
+    K = estimate_intrinsics(sample.shape, image_path=image_paths[0])
+    dist_coeffs = np.zeros(4, dtype=np.float64)  # refined later by BA if enabled
     logger.info(
-        f"Camera K (estimated):\n"
+        f"Camera K (initial):\n"
         f"  [{K[0,0]:.1f}   0   {K[0,2]:.1f}]\n"
         f"  [  0   {K[1,1]:.1f}  {K[1,2]:.1f}]\n"
         f"  [  0     0    1   ]"
@@ -135,13 +183,25 @@ def main(argv=None) -> int:
     # ─────────────────────────────────────────────────────────────────────
     # Stage 3 — Feature matching
     # ─────────────────────────────────────────────────────────────────────
-    logger.info("\n[3/6]  Feature matching…")
+    logger.info(f"\n[3/6]  Feature matching  [{args.match_strategy}]…")
     t = time.time()
-    matcher     = FeatureMatcher(
+
+    common_kw = dict(
         ratio_threshold=args.ratio,
         cross_check=True,
         min_matches=args.min_matches,
     )
+    if args.match_strategy == "sequential":
+        matcher = SequentialMatcher(window=args.sequential_window, **common_kw)
+    elif args.match_strategy == "vocab_tree":
+        matcher = VocabTreeMatcher(
+            n_words=args.vocab_words,
+            top_k=args.vocab_top_k,
+            **common_kw,
+        )
+    else:
+        matcher = FeatureMatcher(**common_kw)
+
     all_matches = matcher.match_all(features)
     logger.info(f"       Done in {time.time()-t:.1f}s — {len(all_matches)} pairs retained")
 
@@ -158,7 +218,7 @@ def main(argv=None) -> int:
         ransac_threshold=args.ransac_thr,
         min_inliers=args.min_inliers,
     )
-    verified = verifier.verify_all(features, all_matches, K)
+    verified = verifier.verify_all(features, all_matches, K, dist_coeffs=dist_coeffs)
     logger.info(f"       Done in {time.time()-t:.1f}s — {len(verified)} verified pairs")
 
     if not verified:
@@ -170,12 +230,15 @@ def main(argv=None) -> int:
     # ─────────────────────────────────────────────────────────────────────
     logger.info("\n[5/6]  Incremental reconstruction…")
     t = time.time()
+    refine_intrinsics = not args.no_refine_intrinsics
     sfm = IncrementalSfM(
         features=features,
         verified_pairs=verified,
         K=K,
         max_reproj_error=args.max_reproj_error,
         ba_interval=args.ba_interval,
+        dist_coeffs=dist_coeffs,
+        refine_intrinsics=refine_intrinsics,
     )
     try:
         cameras, points_3d, observations, kp_to_3d = sfm.reconstruct()
@@ -184,6 +247,15 @@ def main(argv=None) -> int:
         import traceback
         traceback.print_exc()
         return 1
+
+    # Read back refined intrinsics from the SfM object
+    K           = sfm.K
+    dist_coeffs = sfm.dist_coeffs
+    if refine_intrinsics:
+        logger.info(
+            f"       Refined K: f={K[0,0]:.1f}  "
+            f"k1={dist_coeffs[0]:.5f}  k2={dist_coeffs[1]:.5f}"
+        )
 
     logger.info(
         f"       Done in {time.time()-t:.1f}s\n"
@@ -196,9 +268,9 @@ def main(argv=None) -> int:
         return 1
 
     # ─────────────────────────────────────────────────────────────────────
-    # Stage 6 — Export point cloud
+    # Stage 6a — Export sparse point cloud
     # ─────────────────────────────────────────────────────────────────────
-    logger.info("\n[6/6]  Exporting point cloud…")
+    logger.info("\n[6/6]  Exporting sparse point cloud…")
     t = time.time()
     exporter = PointCloudExporter(max_reproj_error=args.max_reproj_error)
 
@@ -216,6 +288,45 @@ def main(argv=None) -> int:
         return 1
 
     logger.info(f"       Done in {time.time()-t:.1f}s")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Stage 6b — MVS densification (optional)
+    # ─────────────────────────────────────────────────────────────────────
+    if args.dense:
+        from sfm.mvs import MVSDensifier
+
+        logger.info("\n[6b]   MVS densification (StereoSGBM)…")
+        t = time.time()
+
+        image_paths_map = {idx: features[idx]["image_path"] for idx in features}
+        densifier = MVSDensifier()
+        dense_pts, dense_colors = densifier.densify(
+            cameras=cameras,
+            K=K,
+            dist_coeffs=dist_coeffs,
+            image_paths=image_paths_map,
+            max_reproj_error=args.max_reproj_error,
+        )
+
+        if len(dense_pts) > 0:
+            if args.dense_output is None:
+                out_stem       = Path(args.output).stem
+                dense_out_path = str(Path(args.output).parent / f"{out_stem}_dense.ply")
+            else:
+                dense_out_path = args.dense_output
+
+            try:
+                exporter.save_ply(dense_out_path, dense_pts, dense_colors)
+                logger.info(
+                    f"       Dense PLY saved → {dense_out_path}  "
+                    f"({len(dense_pts):,} points)"
+                )
+            except Exception as exc:
+                logger.error(f"Failed to write dense PLY: {exc}")
+        else:
+            logger.warning("       MVS produced no dense points.")
+
+        logger.info(f"       Done in {time.time()-t:.1f}s")
 
     # ─────────────────────────────────────────────────────────────────────
     # Summary

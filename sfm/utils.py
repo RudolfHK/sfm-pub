@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -46,25 +47,92 @@ def load_image(path) -> np.ndarray:
     return img
 
 
+# ─── EXIF reading ─────────────────────────────────────────────────────────────
+
+def read_exif_focal_px(path, image_shape: tuple) -> Optional[float]:
+    """
+    Read 35 mm-equivalent focal length from EXIF and convert to pixels.
+    Returns None when EXIF data is absent or incomplete.
+    """
+    try:
+        from PIL import Image as _PILImage
+        with _PILImage.open(str(path)) as img:
+            exif = img._getexif()
+            if exif is None:
+                return None
+            focal_35 = exif.get(0xA405)   # FocalLengthIn35mmFilm
+            if focal_35 is None or focal_35 == 0:
+                return None
+    except Exception:
+        return None
+
+    h, w = image_shape[:2]
+    sensor_diag_35mm = float(np.sqrt(36.0 ** 2 + 24.0 ** 2))
+    image_diag_px    = float(np.sqrt(h ** 2 + w ** 2))
+    return float(focal_35) / sensor_diag_35mm * image_diag_px
+
+
 # ─── Camera maths ────────────────────────────────────────────────────────────
 
-def estimate_intrinsics(image_shape: tuple) -> np.ndarray:
+def estimate_intrinsics(
+    image_shape: tuple,
+    image_path=None,
+) -> np.ndarray:
     """
-    Estimate a plausible pinhole K from image dimensions.
+    Estimate a plausible pinhole K from image dimensions (+ optional EXIF).
 
-    Heuristic: focal ≈ max(W, H), which corresponds to ~53° diagonal FoV —
-    reasonable for typical phone / DSLR imagery.
+    Tries FocalLengthIn35mmFilm from EXIF first; falls back to
+    focal ≈ max(W, H), which is ~53° diagonal FoV.
     """
     h, w = image_shape[:2]
-    focal = float(max(h, w))
+    focal: Optional[float] = None
+
+    if image_path is not None:
+        focal = read_exif_focal_px(image_path, image_shape)
+        if focal is not None:
+            logger.info(f"EXIF focal length: {focal:.0f} px")
+
+    if focal is None:
+        focal = float(max(h, w))
+        logger.debug(f"Focal estimated from image size: {focal:.0f} px")
+
     K = np.array(
         [[focal, 0.0,   w / 2.0],
          [0.0,   focal, h / 2.0],
          [0.0,   0.0,   1.0   ]],
         dtype=np.float64,
     )
-    logger.debug(f"Estimated K: f={focal:.0f}, cx={w/2:.1f}, cy={h/2:.1f}")
+    logger.debug(f"K: f={focal:.0f}, cx={w/2:.1f}, cy={h/2:.1f}")
     return K
+
+
+def undistort_points(
+    pts: np.ndarray,
+    K: np.ndarray,
+    dist: np.ndarray,
+) -> np.ndarray:
+    """
+    Undistort 2-D image points using OpenCV's undistortPoints.
+
+    Parameters
+    ----------
+    pts  : (N, 2) float64
+    K    : (3, 3) camera matrix
+    dist : (4,) or (5,) distortion coefficients [k1, k2, p1, p2[, k3]]
+
+    Returns
+    -------
+    undistorted : (N, 2) float64
+    """
+    if pts.shape[0] == 0:
+        return pts.copy()
+    pts_ud = cv2.undistortPoints(
+        pts.astype(np.float64).reshape(-1, 1, 2),
+        K,
+        dist.astype(np.float64),
+        P=K,
+    )
+    return pts_ud.reshape(-1, 2).astype(np.float64)
 
 
 def projection_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
