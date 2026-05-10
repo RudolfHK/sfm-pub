@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from .device import get_device, has_gpu
 from .utils import load_image
 
 logger = logging.getLogger(__name__)
@@ -21,11 +22,8 @@ logger = logging.getLogger(__name__)
 
 def _cuda_available() -> bool:
     """Return True when a usable CUDA device is present."""
-    try:
-        import torch
-        return torch.cuda.is_available()
-    except ImportError:
-        pass
+    if has_gpu():
+        return True
     try:
         return cv2.cuda.getCudaEnabledDeviceCount() > 0
     except Exception:
@@ -80,10 +78,9 @@ class FeatureExtractor:
             import kornia.feature as KF  # noqa: F401
             self._torch = torch
             self._KF = KF
-            # Also keep a CPU SIFT as descriptor back-end when kornia only
-            # provides keypoints (some builds)
+            # CPU SIFT computes descriptors at GPU-detected keypoint locations.
             self._sift = cv2.SIFT_create(nfeatures=self.n_features)
-            logger.info("Feature extraction backend: kornia (GPU)")
+            logger.info("Feature extraction backend: kornia (GPU keypoints + CPU SIFT descriptors)")
             return "kornia"
         except Exception:
             pass
@@ -161,11 +158,19 @@ class FeatureExtractor:
     def _extract_kornia(
         self, gray: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Use kornia's ScaleSpaceDetector for GPU keypoints, then SIFT descs."""
+        """
+        GPU keypoint detection via kornia ScaleSpaceDetector.
+        Descriptors are computed by OpenCV SIFT at the GPU-detected positions.
+        Previously, the GPU keypoints were computed but discarded; this version
+        actually uses them.
+        """
         try:
             import torch
 
-            device = torch.device("cuda")
+            device = get_device()
+            if device is None or device.type == "cpu":
+                return self._extract_sift_cpu(gray)
+
             t = (
                 torch.from_numpy(gray)
                 .float()
@@ -182,13 +187,46 @@ class FeatureExtractor:
             ).to(device)
 
             with torch.no_grad():
-                lafs, responses = detector(t)
+                lafs, _ = detector(t)
 
-            # Convert LAFs to pixel coords on CPU
-            centres = self._KF.get_laf_center(lafs).squeeze(0).cpu().numpy()  # (N, 2)
+            # lafs: (1, N, 2, 3)  — Local Affine Frames
+            lafs_cpu = lafs.squeeze(0).cpu()  # (N, 2, 3)
 
-            # Fall back to CPU SIFT for descriptors (robust, no extra dep)
-            return self._extract_sift_cpu(gray)
+            if lafs_cpu.shape[0] == 0:
+                return (
+                    np.zeros((0, 2), dtype=np.float32),
+                    np.zeros((0, 128), dtype=np.float32),
+                )
+
+            # Extract pixel centres: last column of each 2×3 LAF matrix
+            centres = (
+                self._KF.get_laf_center(lafs).squeeze(0).cpu().numpy()
+            )  # (N, 2)  x, y
+
+            # Derive scale from the 2×2 linear sub-block (det gives area)
+            A = lafs_cpu[:, :, :2].numpy()  # (N, 2, 2)
+            det = A[:, 0, 0] * A[:, 1, 1] - A[:, 0, 1] * A[:, 1, 0]
+            scales = np.sqrt(np.abs(det).clip(1e-6))  # (N,)
+
+            # Build cv2.KeyPoint list so SIFT can compute 128-D descriptors
+            kp_list = [
+                cv2.KeyPoint(
+                    x=float(centres[k, 0]),
+                    y=float(centres[k, 1]),
+                    size=float(scales[k]) * 6.0,  # SIFT uses diameter
+                )
+                for k in range(len(centres))
+            ]
+
+            kp_out, descs = self._sift.compute(gray, kp_list)
+            if descs is None or len(descs) == 0:
+                return (
+                    np.zeros((0, 2), dtype=np.float32),
+                    np.zeros((0, 128), dtype=np.float32),
+                )
+
+            pts = np.array([kp.pt for kp in kp_out], dtype=np.float32)
+            return pts, descs.astype(np.float32)
 
         except Exception as e:
             logger.warning(f"kornia GPU extraction failed ({e}), using CPU SIFT")

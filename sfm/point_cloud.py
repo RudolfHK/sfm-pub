@@ -25,6 +25,50 @@ from .utils import load_image, reprojection_error
 logger = logging.getLogger(__name__)
 
 
+# ─── Vectorised camera projection helper ─────────────────────────────────────
+
+def _reproject_batch(
+    pts_3d: np.ndarray,
+    pt_indices: np.ndarray,
+    obs_2d: np.ndarray,
+    R: np.ndarray,
+    t: np.ndarray,
+    K: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute reprojection errors for a batch of observations from a single camera.
+
+    Parameters
+    ----------
+    pts_3d     : (P, 3) — all 3-D points in the reconstruction
+    pt_indices : (M,) int — index into pts_3d for each observation
+    obs_2d     : (M, 2) float64 — observed pixel coordinates
+    R, t       : camera extrinsics
+    K          : (3, 3) camera intrinsics
+
+    Returns
+    -------
+    errors : (M,) float64
+    """
+    X   = pts_3d[pt_indices]              # (M, 3)
+    tf  = t.flatten()
+    X_c = (R @ X.T).T + tf               # (M, 3)
+
+    f   = K[0, 0]
+    cx  = K[0, 2]
+    cy  = K[1, 2]
+
+    z   = X_c[:, 2]
+    z_safe = np.where(z > 1e-6, z, 1e-6)
+
+    u   = f * X_c[:, 0] / z_safe + cx
+    v   = f * X_c[:, 1] / z_safe + cy
+
+    errs = np.hypot(u - obs_2d[:, 0], v - obs_2d[:, 1])
+    errs[z <= 0] = np.inf                # behind camera
+    return errs
+
+
 # ─── Colour sampling ─────────────────────────────────────────────────────────
 
 def _sample_bilinear(image: np.ndarray, x: float, y: float) -> np.ndarray:
@@ -73,6 +117,9 @@ class PointCloudExporter:
         """
         Assign RGB colours to all 3-D points.
 
+        Uses vectorised per-camera reprojection to filter observations, then
+        samples bilinear colour from the image for each passing observation.
+
         Returns
         -------
         colors : (P, 3) uint8  in **RGB** order
@@ -80,36 +127,55 @@ class PointCloudExporter:
         n_pts  = len(points_3d)
         colors = np.full((n_pts, 3), 128, dtype=np.uint8)   # default: mid-grey
 
-        # Group observations by 3-D point index
-        obs_by_pt: Dict[int, List[Tuple[int, float, float]]] = {}
+        # Group observations by camera for vectorised reprojection
+        by_cam: Dict[int, Tuple[List[int], List[float], List[float]]] = {}
         for img_idx, pt_idx, x, y in observations:
-            obs_by_pt.setdefault(pt_idx, []).append((img_idx, x, y))
+            if img_idx not in cameras or pt_idx >= n_pts:
+                continue
+            if img_idx not in by_cam:
+                by_cam[img_idx] = ([], [], [])
+            by_cam[img_idx][0].append(pt_idx)
+            by_cam[img_idx][1].append(x)
+            by_cam[img_idx][2].append(y)
 
-        # Load images lazily
+        # per-point colour accumulators
+        color_sum   = np.zeros((n_pts, 3), dtype=np.float64)
+        color_count = np.zeros(n_pts, dtype=np.int32)
+
         image_cache: Dict[int, np.ndarray] = {}
 
-        for pt_idx, obs_list in obs_by_pt.items():
-            if pt_idx >= n_pts:
+        for img_idx, (pt_idxs, xs, ys) in by_cam.items():
+            cam = cameras[img_idx]
+            pt_arr  = np.array(pt_idxs, dtype=np.int32)
+            obs_2d  = np.column_stack([xs, ys]).astype(np.float64)   # (M, 2)
+
+            # Vectorised reprojection errors for the whole camera at once
+            errs = _reproject_batch(
+                points_3d, pt_arr, obs_2d,
+                cam["R"], cam["t"], K,
+            )
+            good = errs <= self.max_reproj_error
+            if not good.any():
                 continue
-            X = points_3d[pt_idx]
-            samples: List[np.ndarray] = []
 
-            for img_idx, x, y in obs_list:
-                if img_idx not in cameras:
-                    continue
-                cam = cameras[img_idx]
-                err = reprojection_error(X, np.array([x, y]), K, cam["R"], cam["t"])
-                if err > self.max_reproj_error:
-                    continue
+            if img_idx not in image_cache:
+                image_cache[img_idx] = load_image(features[img_idx]["image_path"])
+            img = image_cache[img_idx]
 
-                if img_idx not in image_cache:
-                    image_cache[img_idx] = load_image(features[img_idx]["image_path"])
+            good_pts = pt_arr[good]
+            good_xs  = obs_2d[good, 0]
+            good_ys  = obs_2d[good, 1]
 
-                bgr = _sample_bilinear(image_cache[img_idx], x, y)
-                samples.append(bgr[::-1].astype(np.float64))   # BGR → RGB
+            for k in range(len(good_pts)):
+                bgr = _sample_bilinear(img, good_xs[k], good_ys[k])
+                rgb = bgr[::-1].astype(np.float64)   # BGR → RGB
+                color_sum[good_pts[k]]   += rgb
+                color_count[good_pts[k]] += 1
 
-            if samples:
-                colors[pt_idx] = np.mean(samples, axis=0).astype(np.uint8)
+        has_color = color_count > 0
+        colors[has_color] = (
+            color_sum[has_color] / color_count[has_color, np.newaxis]
+        ).astype(np.uint8)
 
         logger.info(
             f"Colourised {n_pts} points "
@@ -139,20 +205,37 @@ class PointCloudExporter:
         if n_pts == 0:
             return points_3d, observations, {}
 
-        # Per-point error accumulation
-        err_acc = [[] for _ in range(n_pts)]
+        # Per-point error accumulation — vectorised per camera
+        err_sum   = np.zeros(n_pts, dtype=np.float64)
+        err_count = np.zeros(n_pts, dtype=np.int32)
+
+        by_cam: Dict[int, Tuple[List[int], List[float], List[float]]] = {}
         for img_idx, pt_idx, x, y in observations:
             if img_idx not in cameras or pt_idx >= n_pts:
                 continue
-            cam = cameras[img_idx]
-            e = reprojection_error(
-                points_3d[pt_idx], np.array([x, y]), K, cam["R"], cam["t"]
-            )
-            if np.isfinite(e):
-                err_acc[pt_idx].append(e)
+            if img_idx not in by_cam:
+                by_cam[img_idx] = ([], [], [])
+            by_cam[img_idx][0].append(pt_idx)
+            by_cam[img_idx][1].append(x)
+            by_cam[img_idx][2].append(y)
 
-        mean_errs = np.array(
-            [np.mean(e) if e else np.inf for e in err_acc], dtype=np.float64
+        for img_idx, (pt_idxs, xs, ys) in by_cam.items():
+            cam    = cameras[img_idx]
+            pt_arr = np.array(pt_idxs, dtype=np.int32)
+            obs_2d = np.column_stack([xs, ys]).astype(np.float64)
+
+            errs = _reproject_batch(
+                points_3d, pt_arr, obs_2d,
+                cam["R"], cam["t"], K,
+            )
+            finite = np.isfinite(errs)
+            np.add.at(err_sum,   pt_arr[finite], errs[finite])
+            np.add.at(err_count, pt_arr[finite], 1)
+
+        mean_errs = np.where(
+            err_count > 0,
+            err_sum / np.maximum(err_count, 1),
+            np.inf,
         )
 
         finite = mean_errs[np.isfinite(mean_errs)]
@@ -170,7 +253,6 @@ class PointCloudExporter:
             f"(thr={thr:.2f} px, median={np.median(finite):.2f} px)"
         )
 
-        # Build compact index mapping
         new_indices              = np.full(n_pts, -1, dtype=np.int64)
         new_indices[keep]        = np.arange(keep.sum(), dtype=np.int64)
         old_to_new               = {
@@ -219,7 +301,6 @@ class PointCloudExporter:
             "end_header\n"
         )
 
-        # Build binary payload in one shot using a structured numpy array
         dtype = np.dtype([
             ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
             ("r", "u1"),  ("g", "u1"),  ("b", "u1"),

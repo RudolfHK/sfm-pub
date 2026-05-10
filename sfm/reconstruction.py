@@ -59,6 +59,103 @@ def _triangulate_dlt(
     return (X_h[:3, 0] / w).astype(np.float64)
 
 
+def _triangulate_batch(
+    P1: np.ndarray,
+    P2: np.ndarray,
+    pts1: np.ndarray,
+    pts2: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Triangulate M point pairs in a single cv2.triangulatePoints call.
+
+    Parameters
+    ----------
+    pts1, pts2 : (M, 2) float64 — undistorted image points
+
+    Returns
+    -------
+    X3d   : (M, 3) float64 — 3-D points (zero-filled where w ≈ 0)
+    valid : (M,) bool      — True where triangulation produced a finite point
+    """
+    M = len(pts1)
+    if M == 0:
+        return np.zeros((0, 3), dtype=np.float64), np.zeros(0, dtype=bool)
+
+    X_h = cv2.triangulatePoints(
+        P1, P2,
+        pts1.T.astype(np.float64),   # (2, M)
+        pts2.T.astype(np.float64),
+    )  # (4, M)
+
+    w     = X_h[3]                              # (M,)
+    valid = np.abs(w) > 1e-10
+    X3d   = np.zeros((M, 3), dtype=np.float64)
+    if valid.any():
+        X3d[valid] = (X_h[:3, valid] / w[valid]).T
+    return X3d, valid
+
+
+def _accept_batch(
+    X3d:    np.ndarray,   # (M, 3)
+    R1:     np.ndarray,
+    t1:     np.ndarray,   # (3,) or (3,1)
+    R2:     np.ndarray,
+    t2:     np.ndarray,
+    pts1:   np.ndarray,   # (M, 2) undistorted
+    pts2:   np.ndarray,
+    C1:     np.ndarray,   # (3,)
+    C2:     np.ndarray,
+    K:      np.ndarray,
+    max_reproj_err: float,
+) -> np.ndarray:
+    """
+    Vectorised acceptance filter for a batch of triangulated 3-D points.
+
+    Checks (in order):
+      1. Positive depth in both cameras.
+      2. Triangulation angle ≥ _MIN_TRIANGULATION_ANGLE_DEG.
+      3. Reprojection error ≤ max_reproj_err in both cameras (pinhole model).
+
+    Returns
+    -------
+    accept : (M,) bool
+    """
+    t1f = t1.flatten()
+    t2f = t2.flatten()
+    f   = K[0, 0]
+    cx  = K[0, 2]
+    cy  = K[1, 2]
+
+    X_cam1 = (R1 @ X3d.T).T + t1f   # (M, 3)
+    X_cam2 = (R2 @ X3d.T).T + t2f
+
+    depth_ok = (X_cam1[:, 2] > 0) & (X_cam2[:, 2] > 0)
+
+    # Triangulation angle
+    r1  = X3d - C1                                                    # (M, 3)
+    r2  = X3d - C2
+    n1  = np.linalg.norm(r1, axis=1, keepdims=True).clip(min=1e-10)
+    n2  = np.linalg.norm(r2, axis=1, keepdims=True).clip(min=1e-10)
+    cos = np.clip((r1 / n1 * r2 / n2).sum(axis=1), -1.0, 1.0)
+    angle_ok = np.degrees(np.arccos(cos)) >= _MIN_TRIANGULATION_ANGLE_DEG
+
+    # Reprojection — camera 1
+    z1   = X_cam1[:, 2].clip(min=1e-6)
+    u1   = f * X_cam1[:, 0] / z1 + cx
+    v1   = f * X_cam1[:, 1] / z1 + cy
+    err1 = np.hypot(u1 - pts1[:, 0], v1 - pts1[:, 1])
+
+    # Reprojection — camera 2
+    z2   = X_cam2[:, 2].clip(min=1e-6)
+    u2   = f * X_cam2[:, 0] / z2 + cx
+    v2   = f * X_cam2[:, 1] / z2 + cy
+    err2 = np.hypot(u2 - pts2[:, 0], v2 - pts2[:, 1])
+
+    reproj_ok = (err1 <= max_reproj_err) & (err2 <= max_reproj_err)
+
+    return depth_ok & angle_ok & reproj_ok
+
+
 def _triangulation_angle_ok(
     X: np.ndarray, C1: np.ndarray, C2: np.ndarray
 ) -> bool:
@@ -216,26 +313,39 @@ class IncrementalSfM:
         C_i = camera_center(R_i, t_i)
         C_j = camera_center(R_j, t_j)
 
-        # Undistorted kps for geometric computations
-        kps_i_ud = self._undist_kps[i]
-        kps_j_ud = self._undist_kps[j]
-        # Original distorted kps for observation storage (BA)
+        kps_i_ud   = self._undist_kps[i]
+        kps_j_ud   = self._undist_kps[j]
         kps_i_orig = self.features[i]["keypoints"]
         kps_j_orig = self.features[j]["keypoints"]
 
-        for match in data["inlier_matches"]:
-            ki, kj = int(match[0]), int(match[1])
-            pt1_ud = kps_i_ud[ki]
-            pt2_ud = kps_j_ud[kj]
+        matches    = data["inlier_matches"]
+        ki_arr     = matches[:, 0].astype(np.int32)
+        kj_arr     = matches[:, 1].astype(np.int32)
 
-            X = _triangulate_dlt(P_i, P_j, pt1_ud, pt2_ud)
-            if X is None:
-                continue
-            if not self._accept_point(X, R_i, t_i, R_j, t_j, pt1_ud, pt2_ud, C_i, C_j):
-                continue
+        pts1_ud = kps_i_ud[ki_arr]   # (M, 2)
+        pts2_ud = kps_j_ud[kj_arr]
 
-            orig_pt1 = kps_i_orig[ki].astype(np.float64)
-            orig_pt2 = kps_j_orig[kj].astype(np.float64)
+        # Batch triangulation — one cv2 call instead of M calls
+        X3d, valid_w = _triangulate_batch(P_i, P_j, pts1_ud, pts2_ud)
+
+        if not valid_w.any():
+            return
+
+        # Vectorised acceptance (depth + angle + reproj) for all valid pts
+        accept = np.zeros(len(matches), dtype=bool)
+        vw_idx = np.where(valid_w)[0]
+        accept[vw_idx] = _accept_batch(
+            X3d[vw_idx],
+            R_i, t_i, R_j, t_j,
+            pts1_ud[vw_idx], pts2_ud[vw_idx],
+            C_i, C_j, self.K, self.max_reproj_err,
+        )
+
+        for k in np.where(accept)[0]:
+            ki, kj = int(ki_arr[k]), int(kj_arr[k])
+            X          = X3d[k]
+            orig_pt1   = kps_i_orig[ki].astype(np.float64)
+            orig_pt2   = kps_j_orig[kj].astype(np.float64)
             idx = self._add_point(X, i, ki, orig_pt1)
             self._link_kp(j, kj, idx)
             self._add_obs(j, idx, orig_pt2)
@@ -367,7 +477,10 @@ class IncrementalSfM:
     # ── triangulation ─────────────────────────────────────────────────────
 
     def _triangulate_new_points(self, new_idx: int) -> int:
-        """Triangulate 3-D points visible from `new_idx` and any registered neighbour."""
+        """
+        Triangulate 3-D points visible from `new_idx` and any registered
+        neighbour.  Uses batched triangulation per pair.
+        """
         R_n = self.cameras[new_idx]["R"]
         t_n = self.cameras[new_idx]["t"]
         P_n = projection_matrix(self.K, R_n, t_n)
@@ -388,30 +501,58 @@ class IncrementalSfM:
             kps_o_ud   = self._undist_kps[other]
             kps_o_orig = self.features[other]["keypoints"]
 
-            for m in data["inlier_matches"]:
+            matches = data["inlier_matches"]
+
+            # First pass: propagate existing 3-D point links
+            link_new: List[Tuple[int, int, int]] = []   # (ks, ko, pt3d_idx)
+            to_tri_ks: List[int] = []
+            to_tri_ko: List[int] = []
+
+            for m in matches:
                 ks = int(m[self_col])
                 ko = int(m[other_col])
 
-                # If `other` keypoint already has a 3-D point, propagate the link
                 if (other, ko) in self.kp_to_3d:
                     if (new_idx, ks) not in self.kp_to_3d:
                         pt3d_idx = self.kp_to_3d[(other, ko)]
-                        self._link_kp(new_idx, ks, pt3d_idx)
-                        self._add_obs(new_idx, pt3d_idx, kps_n_orig[ks].astype(np.float64))
+                        link_new.append((ks, ko, pt3d_idx))
                     continue
 
-                # Both unassigned — triangulate a new point
-                if (new_idx, ks) in self.kp_to_3d:
-                    continue
+                if (new_idx, ks) not in self.kp_to_3d:
+                    to_tri_ks.append(ks)
+                    to_tri_ko.append(ko)
 
-                pt_n_ud = kps_n_ud[ks]
-                pt_o_ud = kps_o_ud[ko]
-                X = _triangulate_dlt(P_n, P_o, pt_n_ud, pt_o_ud)
-                if X is None:
-                    continue
-                if not self._accept_point(X, R_n, t_n, R_o, t_o, pt_n_ud, pt_o_ud, C_n, C_o):
-                    continue
+            # Apply propagated links
+            for ks, ko, pt3d_idx in link_new:
+                self._link_kp(new_idx, ks, pt3d_idx)
+                self._add_obs(new_idx, pt3d_idx, kps_n_orig[ks].astype(np.float64))
 
+            if not to_tri_ks:
+                continue
+
+            # Batch triangulate the remaining unassigned matches
+            ks_arr = np.array(to_tri_ks, dtype=np.int32)
+            ko_arr = np.array(to_tri_ko, dtype=np.int32)
+            pts_n  = kps_n_ud[ks_arr]   # (M, 2)
+            pts_o  = kps_o_ud[ko_arr]
+
+            X3d, valid_w = _triangulate_batch(P_n, P_o, pts_n, pts_o)
+
+            if not valid_w.any():
+                continue
+
+            vw_idx = np.where(valid_w)[0]
+            accept = np.zeros(len(ks_arr), dtype=bool)
+            accept[vw_idx] = _accept_batch(
+                X3d[vw_idx],
+                R_n, t_n, R_o, t_o,
+                pts_n[vw_idx], pts_o[vw_idx],
+                C_n, C_o, self.K, self.max_reproj_err,
+            )
+
+            for k in np.where(accept)[0]:
+                ks, ko   = int(ks_arr[k]), int(ko_arr[k])
+                X        = X3d[k]
                 pt_n_orig = kps_n_orig[ks].astype(np.float64)
                 pt_o_orig = kps_o_orig[ko].astype(np.float64)
                 idx = self._add_point(X, new_idx, ks, pt_n_orig)
@@ -431,18 +572,15 @@ class IncrementalSfM:
         pt1: np.ndarray, pt2: np.ndarray,
         C1: np.ndarray, C2: np.ndarray,
     ) -> bool:
-        """Return True when X passes all geometric sanity checks."""
+        """Return True when X passes all geometric sanity checks (single point)."""
         t1f, t2f = t1.flatten(), t2.flatten()
 
-        # Positive depth in both cameras
         if (R1 @ X + t1f)[2] <= 0 or (R2 @ X + t2f)[2] <= 0:
             return False
 
-        # Sufficient triangulation angle
         if not _triangulation_angle_ok(X, C1, C2):
             return False
 
-        # Reprojection error below threshold (uses undistorted pts + pinhole)
         if (
             reprojection_error(X, pt1, self.K, R1, t1) > self.max_reproj_err
             or reprojection_error(X, pt2, self.K, R2, t2) > self.max_reproj_err
@@ -458,17 +596,13 @@ class IncrementalSfM:
         Remove 3-D points whose mean reprojection error exceeds the threshold.
         Rebuilds self.points_3d, self.observations, and self.kp_to_3d with
         remapped indices.
-
-        Note: reprojection_error uses the standard pinhole model on the stored
-        (distorted) observation coordinates.  The error is slightly off when
-        k1/k2 ≠ 0, but is accurate enough for outlier filtering purposes.
         """
         n = len(self.points_3d)
         if n == 0:
             return
 
         # Accumulate per-point errors
-        errors     = [[] for _ in range(n)]
+        errors = [[] for _ in range(n)]
         for img_idx, pt_idx, x, y in self.observations:
             if img_idx not in self.cameras or pt_idx >= n:
                 continue
@@ -485,7 +619,6 @@ class IncrementalSfM:
             [np.mean(e) if e else np.inf for e in errors], dtype=np.float64
         )
 
-        # Threshold: median + 3σ, but hard-capped at max_reproj_err
         finite = mean_errs[np.isfinite(mean_errs)]
         if len(finite) == 0:
             return
@@ -503,7 +636,6 @@ class IncrementalSfM:
             f"(threshold={thr:.2f} px)"
         )
 
-        # Build remapping
         new_idx_map = np.full(n, -1, dtype=np.int64)
         new_idx_map[keep] = np.arange(keep.sum(), dtype=np.int64)
 
@@ -537,8 +669,6 @@ class IncrementalSfM:
         if K_ref is not None:
             self.K = K_ref
             self.dist_coeffs = dist_ref
-            # Re-compute undistorted keypoints with refined distortion so that
-            # subsequent PnP calls use accurate undistortion.
             if np.any(dist_ref != 0):
                 for img_idx in self.features:
                     kps = self.features[img_idx]["keypoints"].astype(np.float64)
