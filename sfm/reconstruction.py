@@ -183,6 +183,7 @@ class IncrementalSfM:
         ba_interval: int = 5,
         dist_coeffs: Optional[np.ndarray] = None,
         refine_intrinsics: bool = True,
+        visualizer=None,
     ) -> None:
         self.features        = features
         self.verified_pairs  = verified_pairs
@@ -190,6 +191,8 @@ class IncrementalSfM:
         self.max_reproj_err  = max_reproj_error
         self.ba_interval     = ba_interval
         self.refine_intrinsics = refine_intrinsics
+        self.viz             = visualizer   # None → all viz calls are skipped
+        self._ba_step        = 0            # running count for viz
 
         if dist_coeffs is None:
             self.dist_coeffs = np.zeros(4, dtype=np.float64)
@@ -234,11 +237,17 @@ class IncrementalSfM:
         # ── Seed ──────────────────────────────────────────────────────────
         seed_i, seed_j = self._select_seed_pair()
         logger.info(f"Seed pair: images {seed_i} ↔ {seed_j}")
+        if self.viz is not None:
+            self.viz.on_seed_pair_selected(seed_i, seed_j)
         self._initialise_from_pair(seed_i, seed_j)
         logger.info(
             f"Initialised: {len(self.points_3d)} 3-D points "
             f"from {len(self.cameras)} cameras"
         )
+        if self.viz is not None:
+            pts0 = np.array(self.points_3d, dtype=np.float64) if self.points_3d else np.zeros((0, 3))
+            csnap = {k: {"R": v["R"].copy(), "t": v["t"].copy()} for k, v in self.cameras.items()}
+            self.viz.on_camera_registered((seed_i, seed_j), csnap, pts0, len(pts0))
 
         # ── Incremental registration ───────────────────────────────────────
         registered   = {seed_i, seed_j}
@@ -269,6 +278,10 @@ class IncrementalSfM:
                 f"  ✓ Registered. New 3-D pts: {n_new}, "
                 f"total: {len(self.points_3d)}, cameras: {len(self.cameras)}"
             )
+            if self.viz is not None:
+                pts_snap = np.array(self.points_3d, dtype=np.float64) if self.points_3d else np.zeros((0, 3))
+                csnap    = {k: {"R": v["R"].copy(), "t": v["t"].copy()} for k, v in self.cameras.items()}
+                self.viz.on_camera_registered(img_idx, csnap, pts_snap, n_new)
 
             self._cams_since_ba += 1
             if self._cams_since_ba >= self.ba_interval:
@@ -657,7 +670,10 @@ class IncrementalSfM:
         if len(self.cameras) < 2 or len(self.points_3d) < 10:
             return
 
-        pts_arr = np.array(self.points_3d, dtype=np.float64)
+        pts_arr      = np.array(self.points_3d, dtype=np.float64)
+        n_pts_before = len(pts_arr)
+        rmse_before  = self._quick_rmse(pts_arr) if self.viz is not None else 0.0
+
         updated_cams, updated_pts, K_ref, dist_ref = self._ba.adjust(
             self.cameras, pts_arr, self.observations, self.K,
             dist_coeffs=self.dist_coeffs,
@@ -665,6 +681,15 @@ class IncrementalSfM:
         )
         self.cameras   = updated_cams
         self.points_3d = [updated_pts[i] for i in range(len(updated_pts))]
+
+        if self.viz is not None:
+            pts_after   = np.array(self.points_3d, dtype=np.float64)
+            rmse_after  = self._quick_rmse(pts_after)
+            self._ba_step += 1
+            self.viz.on_bundle_adjustment_run(
+                self._ba_step, rmse_before, rmse_after,
+                len(self.cameras), n_pts_before, len(pts_after),
+            )
 
         if K_ref is not None:
             self.K = K_ref
@@ -698,6 +723,24 @@ class IncrementalSfM:
         self._link_kp(img_idx, kp_idx, idx)
         self._add_obs(img_idx, idx, pt2d)
         return idx
+
+    def _quick_rmse(self, pts_arr: np.ndarray) -> float:
+        """Fast vectorised reprojection RMSE over all current observations."""
+        if not self.cameras or not self.observations:
+            return 0.0
+        K  = self.K
+        f  = K[0, 0]; cx = K[0, 2]; cy = K[1, 2]
+        sq: List[float] = []
+        for img_idx, pt_idx, x, y in self.observations:
+            if img_idx not in self.cameras or pt_idx >= len(pts_arr):
+                continue
+            cam = self.cameras[img_idx]
+            X_c = cam["R"] @ pts_arr[pt_idx] + cam["t"].flatten()
+            if X_c[2] > 1e-6:
+                u = f * X_c[0] / X_c[2] + cx
+                v = f * X_c[1] / X_c[2] + cy
+                sq.append((u - x) ** 2 + (v - y) ** 2)
+        return float(np.sqrt(np.mean(sq))) if sq else 0.0
 
     def _link_kp(self, img_idx: int, kp_idx: int, pt3d_idx: int) -> None:
         self.kp_to_3d[(img_idx, kp_idx)] = pt3d_idx

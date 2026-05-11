@@ -119,6 +119,41 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose", action="store_true",
         help="Enable DEBUG-level logging.",
     )
+
+    # ── Visualization (completely optional) ──────────────────────────────
+    viz = p.add_argument_group("visualization (all ignored unless --visualize is set)")
+    viz.add_argument(
+        "--visualize", action="store_true",
+        help="Enable the full visualization suite.  Zero overhead when omitted.",
+    )
+    viz.add_argument(
+        "--viz-samples", type=int, default=3, metavar="N",
+        help="Number of images / pairs to sample for feature/match visualizations.",
+    )
+    viz.add_argument(
+        "--viz-output", default="sfm_visualization", metavar="DIR",
+        help="Directory to save all visualization outputs.",
+    )
+    viz.add_argument(
+        "--viz-format", default="png", choices=["png", "jpg", "pdf"], metavar="FMT",
+        help="Output image format for saved figures.",
+    )
+    viz.add_argument(
+        "--viz-interactive", action="store_true",
+        help="Open an interactive open3d point-cloud viewer at end of pipeline.",
+    )
+    viz.add_argument(
+        "--viz-save-video", action="store_true",
+        help="Export reconstruction growth GIF and point-cloud turntable GIF.",
+    )
+    viz.add_argument(
+        "--viz-dpi", type=int, default=150, metavar="N",
+        help="DPI for saved figures.",
+    )
+    viz.add_argument(
+        "--viz-seed", type=int, default=42, metavar="N",
+        help="Random seed for reproducible image/pair sampling.",
+    )
     return p
 
 
@@ -144,6 +179,22 @@ def main(argv=None) -> int:
     from sfm.utils                 import list_images, load_image, estimate_intrinsics
     import numpy as np
 
+    # ── Visualizer (zero cost when --visualize is not set) ────────────────
+    if args.visualize:
+        from sfm.visualizer import SfMVisualizer
+        viz = SfMVisualizer(
+            enabled     = True,
+            output_dir  = args.viz_output,
+            n_samples   = args.viz_samples,
+            fmt         = args.viz_format,
+            interactive = args.viz_interactive,
+            save_video  = args.viz_save_video,
+            dpi         = args.viz_dpi,
+            seed        = args.viz_seed,
+        )
+    else:
+        viz = None      # guaranteed no-op — never imported when disabled
+
     # ─────────────────────────────────────────────────────────────────────
     # Stage 1 — Discover images & estimate intrinsics
     # ─────────────────────────────────────────────────────────────────────
@@ -161,6 +212,13 @@ def main(argv=None) -> int:
     sample = load_image(image_paths[0])
     K = estimate_intrinsics(sample.shape, image_path=image_paths[0])
     dist_coeffs = np.zeros(4, dtype=np.float64)  # refined later by BA if enabled
+
+    if viz is not None:
+        try:
+            viz.on_pipeline_start(image_paths, K, args)
+        except Exception as _e:
+            logger.warning(f"[VIZ] on_pipeline_start: {_e}")
+
     logger.info(
         f"Camera K (initial):\n"
         f"  [{K[0,0]:.1f}   0   {K[0,2]:.1f}]\n"
@@ -179,6 +237,12 @@ def main(argv=None) -> int:
 
     total_kps = sum(len(f["keypoints"]) for f in features.values())
     logger.info(f"       {total_kps:,} keypoints total")
+
+    if viz is not None:
+        try:
+            viz.on_all_features_done(features)
+        except Exception as _e:
+            logger.warning(f"[VIZ] on_all_features_done: {_e}")
 
     # ─────────────────────────────────────────────────────────────────────
     # Stage 3 — Feature matching
@@ -205,6 +269,12 @@ def main(argv=None) -> int:
     all_matches = matcher.match_all(features)
     logger.info(f"       Done in {time.time()-t:.1f}s — {len(all_matches)} pairs retained")
 
+    if viz is not None:
+        try:
+            viz.on_all_matching_done(all_matches, features)
+        except Exception as _e:
+            logger.warning(f"[VIZ] on_all_matching_done: {_e}")
+
     if not all_matches:
         logger.error("No pairs with sufficient matches — aborting.")
         return 1
@@ -220,6 +290,12 @@ def main(argv=None) -> int:
     )
     verified = verifier.verify_all(features, all_matches, K, dist_coeffs=dist_coeffs)
     logger.info(f"       Done in {time.time()-t:.1f}s — {len(verified)} verified pairs")
+
+    if viz is not None:
+        try:
+            viz.on_geometric_verification_done(all_matches, verified, features)
+        except Exception as _e:
+            logger.warning(f"[VIZ] on_geometric_verification_done: {_e}")
 
     if not verified:
         logger.error("No pairs passed geometric verification — aborting.")
@@ -239,6 +315,7 @@ def main(argv=None) -> int:
         ba_interval=args.ba_interval,
         dist_coeffs=dist_coeffs,
         refine_intrinsics=refine_intrinsics,
+        visualizer=viz,
     )
     try:
         cameras, points_3d, observations, kp_to_3d = sfm.reconstruct()
@@ -266,6 +343,12 @@ def main(argv=None) -> int:
     if len(points_3d) == 0:
         logger.error("No 3-D points reconstructed — aborting.")
         return 1
+
+    if viz is not None:
+        try:
+            viz.on_reconstruction_complete(cameras, points_3d, observations, features, K)
+        except Exception as _e:
+            logger.warning(f"[VIZ] on_reconstruction_complete: {_e}")
 
     # ─────────────────────────────────────────────────────────────────────
     # Stage 6a — Export sparse point cloud
@@ -327,6 +410,37 @@ def main(argv=None) -> int:
             logger.warning("       MVS produced no dense points.")
 
         logger.info(f"       Done in {time.time()-t:.1f}s")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Visualization — final outputs
+    # ─────────────────────────────────────────────────────────────────────
+    if viz is not None:
+        from sfm.utils import reprojection_error as _reproj_err
+        _errs = [
+            _reproj_err(points_3d[pt_idx], np.array([x, y]), K,
+                        cameras[img_idx]["R"], cameras[img_idx]["t"])
+            for img_idx, pt_idx, x, y in observations
+            if img_idx in cameras and pt_idx < len(points_3d)
+        ]
+        _rmse = float(np.sqrt(np.mean(np.array(_errs) ** 2))) if _errs else 0.0
+
+        _h, _w = load_image(image_paths[0]).shape[:2]
+        try:
+            viz.on_pipeline_complete(
+                cameras   = cameras,
+                points_3d = points_3d,
+                colors    = colors,
+                stats     = {
+                    "n_images":   len(image_paths),
+                    "n_cameras":  len(cameras),
+                    "n_points":   len(points_3d),
+                    "resolution": f"{_w}×{_h}",
+                    "rmse":       _rmse,
+                    "elapsed":    time.time() - t_total,
+                },
+            )
+        except Exception as _e:
+            logger.warning(f"[VIZ] on_pipeline_complete: {_e}")
 
     # ─────────────────────────────────────────────────────────────────────
     # Summary
