@@ -10,5 +10,7 @@ build/
 *.log
 *.bak
 venv/
+venv311/
+.venv*/
 env/
 sfm_visualization/

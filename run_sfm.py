@@ -14,7 +14,7 @@ Usage
     python run_sfm.py --image_dir ./images --output output.ply --backend colmap-mvs
 
     # Example usage for specific dataset:
-    python run_sfm.py --image_dir "C:/Users/baldo/Downloads/dataset_buddha-master/dataset_buddha-master/buddha_imgs" --output buddha_python_dense.ply --dense --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
+    python run_sfm.py --image_dir "C:/Users/baldo/Downloads/dataset_buddha-master/dataset_buddha-master/buddha_imgs" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense2.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
 
 Run `python run_sfm.py --help` for all options.
 """
