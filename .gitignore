@@ -11,3 +11,4 @@ build/
 *.bak
 venv/
 env/
+sfm_visualization/
