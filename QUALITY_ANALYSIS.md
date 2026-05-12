@@ -6,6 +6,31 @@
 
 ---
 
+## Changelog
+
+### Updated: 2026-05-12
+
+- ✅ **GPU feature detection now functional** — `_extract_kornia()` in `feature_extraction.py` correctly uses GPU-detected LAF keypoints instead of discarding them (previously critical bug).
+- ✅ **`SequentialMatcher` implemented** — `feature_matching.py` has a sliding-window sequential matcher, closing GAP-4 for ordered datasets.
+- ✅ **`VocabTreeMatcher` implemented** — bag-of-words retrieval with k-means vocabulary, TF-IDF weighting, and GPU-accelerated cosine similarity, closing GAP-4 for large unordered datasets.
+- ✅ **GPU descriptor matching implemented** — `_match_pair_gpu()` using `torch.cdist` for full L2 distance matrix, dramatically accelerating brute-force matching when a CUDA GPU is available.
+- ✅ **MVS densification implemented** — `sfm/mvs.py` provides a StereoSGBM-based dense reconstruction pipeline, closing GAP-2.
+- ✅ **EXIF focal length reading implemented** — `utils.read_exif_focal_px()` reads `FocalLengthIn35mmFilm` tag and converts to pixel units, closing GAP-3 (init side).
+- ✅ **Radial distortion (k1, k2) in bundle adjustment** — BA now jointly refines focal length + k1/k2 when `refine_intrinsics=True`, partially closing GAP-1 and GAP-3.
+- ✅ **Distortion-aware geometric verification** — `undistort_points()` applied before RANSAC in `geometric_verification.py`, improving epipolar constraint accuracy.
+- ✅ **Central device manager** — `sfm/device.py` with `get_device()` / `has_gpu()` utilities.
+- ✅ **Visualization suite** — `sfm/visualizer.py`: comprehensive event-driven visualization with zero cost when `--visualize` not passed.
+- ✅ **COLMAP backend** — `sfm/colmap_backend.py`: `--backend colmap / colmap-mvs` routes through COLMAP CLI with PLY output compatible with existing tooling.
+- 🟡 **Quality tier updated: 🟠 Research Prototype → 🟡 Approaching Solid Open Source** — four of the five originally identified blocking gaps have been addressed or substantially narrowed. Remaining critical gaps: principal point not in BA, no covisibility graph / local BA, no Hartley normalization, no LO-RANSAC on E matrix.
+- 🆕 **New gap identified:** Principal point (cx, cy) not refined in BA — only focal length f is optimized.
+- 🆕 **New gap identified:** E-matrix estimation uses `cv2.RANSAC` instead of USAC_MAGSAC — inconsistent with F-matrix path.
+- 🆕 **New gap identified:** No Hartley normalization (coordinate centering/scaling) before F/E RANSAC — numerical stability issue for wide-resolution images.
+- 🆕 **New gap identified:** No SO(3) re-orthogonalization after BA — Rodrigues vectors decode directly to R without SVD projection back to SO(3).
+- 🆕 **New gap identified:** No pipeline checkpointing — crash mid-run requires restarting from scratch.
+- 🆕 **New gap identified:** No input validation at pipeline entry.
+
+---
+
 ## Table of Contents
 
 1. [Full Codebase Audit](#1-full-codebase-audit)
@@ -35,7 +60,7 @@ cv2.SIFT_create(nfeatures=8000, nOctaveLayers=3,
 - Output contract (L2-normalized `float32` descriptors) is consistent throughout the pipeline.
 
 **What is simplified or naive:**
-- The kornia backend path detects keypoints on GPU but then calls `_extract_sift_cpu(gray)` for descriptors, discarding the kornia keypoints entirely and returning purely CPU SIFT results. The GPU path provides no real acceleration in practice.
+- ~~The kornia backend path detects keypoints on GPU but then calls `_extract_sift_cpu(gray)` for descriptors, discarding the kornia keypoints entirely.~~ **✅ FIXED:** `_extract_kornia()` now correctly uses GPU-detected LAF centres and scales to build `cv2.KeyPoint` objects, then calls `sift.compute()` at those positions. The GPU path provides genuine acceleration on CUDA hardware.
 - `contrastThreshold=0.04` is conservative; lowering it to `0.02` would increase feature density by 40–60% on real imagery at minimal cost to precision.
 - No affine adaptation. SIFT is invariant to similarity transforms (scale + rotation) but not to affine deformations introduced by oblique viewpoints. ASIFT (Morel & Yu, 2009) or MSER covers this case.
 - No multi-model fallback when SIFT finds < N features on an image (e.g., smooth surfaces).
@@ -49,21 +74,22 @@ cv2.SIFT_create(nfeatures=8000, nOctaveLayers=3,
 
 ### 1.2 Feature Matching — `sfm/feature_matching.py`
 
-**Algorithm:** FLANN KDTree (5 trees, 50 checks), Lowe's ratio test at 0.75, optional cross-check.
+**Algorithm:** FLANN KDTree (5 trees, 50 checks), Lowe's ratio test at 0.75, optional cross-check for CPU path; `torch.cdist` L2 brute-force on GPU when available. Three matcher classes: `FeatureMatcher` (exhaustive), `SequentialMatcher` (sliding window), `VocabTreeMatcher` (bag-of-words retrieval).
 
 **What is implemented well:**
 - Ratio = 0.75 is the canonical Lowe threshold; cross-check eliminates a significant fraction of incorrect ratio-test survivors.
 - FLANN KDTree is the correct choice for SIFT's 128-D `float32` descriptors (preferred over LSH, which suits binary descriptors).
 - The `(i, j)` canonical pair ordering avoids duplicate work.
+- **✅ NEW:** `SequentialMatcher` pairs only images within a configurable sliding window (`--sequential_window`, default 5), reducing O(N²) to O(N × W) for ordered sequences.
+- **✅ NEW:** `VocabTreeMatcher` builds a k-means vocabulary, encodes images as TF-IDF weighted histograms, and retrieves the `top_k` most similar candidates per image via GPU cosine similarity — reducing matching work from O(N²) to O(N × top_k).
+- **✅ NEW:** GPU matching path (`_match_pair_gpu`) uses `torch.cdist` for the full L2 distance matrix, with vectorized ratio-test and optional cross-check, dramatically accelerating large batches on CUDA hardware.
 
 **What is simplified or naive:**
-- **Exhaustive pairwise matching is O(N²) in image count.** For N=100 images, this means 4,950 pair match attempts; for N=500 it is 124,750 — already impractical in pure Python. There is no pair pre-filtering by any proximity measure.
 - Ratio threshold is fixed at 0.75 regardless of descriptor type, scene complexity, or viewpoint change. Production systems adapt this per-session.
 - No guided matching: after a camera is registered, its pose could be used to compute epipolar lines and only search for matches within a narrow band, dramatically improving precision and recall.
+- VocabTreeMatcher uses k-means on the local dataset rather than a pre-built large-scale vocabulary (DBoW2/NetVLAD); retrieval quality depends on dataset diversity.
 
 **Entirely missing vs. production systems:**
-- Vocabulary-tree-based retrieval (DBoW2, Bag-of-Words, SceneLib2). COLMAP and OpenSfM identify *potentially overlapping* pairs from a compact image signature before running the full FLANN match, reducing O(N²) to approximately O(N log N).
-- **Sequential matching** for ordered image sequences (video, drone flight plans) — pairs only adjacent images in sorted order.
 - Learned matchers: SuperGlue (Sarlin et al., 2020) and LightGlue (Lindenberger et al., 2023) replace ratio + cross-check with an attention graph over all keypoints, achieving far higher correct-match density on low-overlap and textureless scenes.
 - Covisibility-based expansion matching: after initial reconstruction, match only image pairs sharing reconstructed 3-D points.
 
@@ -81,12 +107,14 @@ cv2.SIFT_create(nfeatures=8000, nOctaveLayers=3,
 - Near-zero baseline rejection (`‖t‖ < 1e-4`) correctly discards near-pure-rotation pairs that would yield degenerate 3-D structure.
 
 **What is simplified or naive:**
-- E estimation uses plain `cv2.RANSAC` (basic 5-point algorithm + random sampling). MAGSAC or LO-RANSAC would be more appropriate here too; the E-inlier set quality directly determines the pose accuracy that seeds the reconstruction.
+- E estimation uses plain `cv2.RANSAC` (basic 5-point algorithm + random sampling). MAGSAC or LO-RANSAC would be more appropriate here too; the E-inlier set quality directly determines the pose accuracy that seeds the reconstruction. **🆕 NEW GAP:** This inconsistency with the F-matrix path (which uses USAC_MAGSAC) should be fixed.
 - `ransac_threshold = 1.0` pixel is a reasonable *starting* value but is applied uniformly across all image pairs regardless of image resolution, estimated baseline, or scene depth. Production systems use scale-adaptive thresholds.
-- The pipeline operates on raw pixel coordinates throughout. Without undistorting images (impossible given the absent distortion model), all geometric constraints (epipolar lines, DLT) are satisfied only approximately for lenses with > 1% radial distortion — which includes essentially all real cameras.
+- **🆕 NEW GAP:** No Hartley normalization — pixel coordinates are passed directly to `findFundamentalMat` and `findEssentialMat` without centering and scaling. This is a known numerical stability issue: condition numbers of the DLT system are orders of magnitude better with normalized coordinates (Hartley, 1997).
 
-**Entirely missing:**
-- Radial distortion correction before RANSAC (even a simple `cv2.undistort` pass with estimated k1/k2 would improve inlier counts significantly).
+**Partially addressed:**
+- ~~The pipeline operates on raw pixel coordinates throughout.~~ **✅ PARTIAL FIX:** `undistort_points()` is now called before RANSAC in `geometric_verification.py`, correcting for k1/k2 radial distortion when available. However, when the BA-refined k1/k2 are zero (first run), raw coordinates are still used.
+
+**Still entirely missing:**
 - Homography + fundamental matrix discrimination: a verified pair that is best explained by a homography (planar scene, pure rotation) should be flagged and excluded from the reconstruction seed, not just from the lowest-baseline filter.
 - LO-RANSAC (Local Optimization) for the E-matrix step: after RANSAC converges, re-estimating E from the full inlier set and repeating dramatically improves accuracy at negligible cost.
 
@@ -94,24 +122,27 @@ cv2.SIFT_create(nfeatures=8000, nOctaveLayers=3,
 
 ### 1.4 Camera Model — `sfm/utils.py`
 
-**Model:** Pure pinhole, single shared K, no distortion.
+**Model:** Pinhole with optional radial distortion (k1, k2), EXIF-initialized focal length, single shared K.
 
 ```python
-focal = float(max(H, W))          # heuristic: ~53° diagonal FoV
+# utils.py estimate_intrinsics(): tries EXIF first, falls back to heuristic
+focal = read_exif_focal_px(image_path, H, W)   # ✅ NEW: reads FocalLengthIn35mmFilm
+if focal is None:
+    focal = float(max(H, W))   # heuristic fallback: ~53° diagonal FoV
 K = [[focal, 0, W/2],
      [0, focal, H/2],
      [0, 0,     1  ]]
 ```
 
-**Critical assessment:**
+**Current assessment:**
 
-This is the most consequential technical limitation in the entire codebase.
+**✅ EXIF focal length reading** — `read_exif_focal_px()` now reads the `FocalLengthIn35mmFilm` EXIF tag (0xA405) and converts it to pixel units using the sensor diagonal formula. This eliminates the systematic 15–25% focal length error on cameras with EXIF data. The heuristic `f = max(H, W)` is used only as a fallback.
 
-Every real camera — including modern phone cameras — has measurable radial and tangential lens distortion. A typical 24 mm equivalent lens has `k1 ≈ -0.05` to `-0.15`. Ignoring this introduces systematic pixel-level errors in *every* epipolar constraint, *every* triangulation, and *every* reprojection residual computed by BA. The BA cannot converge to a low residual because the systematic distortion error is indistinguishable from genuine pose error.
+**✅ Radial distortion (k1, k2) in BA** — The bundle adjustment now jointly optimizes focal length f and radial coefficients k1, k2 alongside camera extrinsics and 3-D points when `refine_intrinsics=True`. This substantially reduces systematic reprojection error on real cameras.
 
-Additionally, the focal-length heuristic `f = max(H, W)` corresponds to a field of view of `2 × arctan(0.5) ≈ 53°` — a reasonable approximation for a normal 35–50 mm equivalent lens, but off by 15–30% for typical phone cameras (24 mm, FoV ≈ 80°) and dramatically wrong for drone gimbals, telephotos, or action cameras (fisheye).
+**🆕 REMAINING GAP — Principal point (cx, cy) not optimized** — The BA parameter vector includes only `[rvec(3), tvec(3), f, k1, k2]` = 9 DOF per camera. cx and cy are fixed at `(W/2, H/2)`. For cameras whose optical center deviates more than ~1% of image dimensions from the image center (common on phone cameras), this introduces a residual systematic bias.
 
-The shared K assumption means that images taken with different camera models (e.g., a session that mixes two phone cameras) cannot be represented. COLMAP assigns one K per unique camera model, identified via EXIF.
+**Remaining limitation** — The shared K assumption means that images taken with different camera models cannot be represented. COLMAP assigns one K per unique camera model, identified via EXIF.
 
 ---
 
@@ -153,8 +184,9 @@ The shared K assumption means that images taken with different camera models (e.
 - The consecutive-index remapping for cameras ensures the BA parameter vector is dense (no gaps from unregistered cameras).
 
 **What is simplified or naive:**
-- **K is not optimized.** The intrinsic matrix is fixed throughout BA. This means systematic errors from the focal-length heuristic cannot be corrected by the data. In COLMAP, BA simultaneously refines all camera intrinsics, and for undistorted datasets this is where the dominant improvement in final reprojection accuracy comes from.
-- **No distortion parameters.** Even adding the two dominant radial terms (k1, k2) to the optimization vector would substantially improve residuals on real imagery. The distortion Jacobian ∂(u,v)/∂(k1,k2) is straightforward to derive and implement.
+- ~~**K is not optimized.**~~ **✅ PARTIAL FIX:** Focal length `f` is now optimized jointly in BA. However, **the principal point (cx, cy) remains fixed** at image center. This is a new gap (GAP-NEW-1) — cx/cy error of > 1% of image dimensions introduces a residual systematic pose bias.
+- ~~**No distortion parameters.**~~ **✅ IMPLEMENTED:** k1 and k2 (Brown–Conrady 2-parameter radial model) are now in the BA parameter vector. The distortion Jacobian ∂(u,v)/∂(k1,k2) is computed analytically. **Still missing:** tangential distortion p1, p2.
+- **🆕 NEW GAP:** No SO(3) re-orthogonalization — Rodrigues vectors are decoded to R matrices directly without SVD-based projection back onto SO(3). After BA update steps, the recovered R may have determinant slightly ≠ 1 and is not guaranteed to be a proper rotation. This rarely causes visible artifacts but violates the mathematical constraint.
 - `scipy.optimize.least_squares` (TRF) uses a Gauss-Newton approximation and is exact in the mathematical formulation, but is substantially slower than Ceres Solver or g2o for large problems. Ceres uses the Levenberg-Marquardt algorithm with analytical Jacobians and a highly optimized sparse linear algebra backend (CHOLMOD / Eigen), while scipy uses finite-differences or user-provided forward-mode differentiation.
 - `max_nfev = 200` evaluations is the *per-evaluation* multiplier: the actual limit is `200 × (6C + 3P)`. For C=10, P=1000, this is 3.18 million evaluations — far more than needed. The effective bottleneck is the TRF iteration count, not the evaluation limit.
 - Convergence tolerances `ftol = gtol = xtol = 1e-4` are moderately loose. COLMAP uses `1e-6` for final BA.
@@ -170,13 +202,15 @@ The shared K assumption means that images taken with different camera models (e.
 - The `median + 3σ` outlier filter is a standard, defensible approach for the final point cloud.
 - Lazy image caching prevents redundant disk reads.
 
-**What is missing (entirely):**
-- **Multi-View Stereo (MVS) densification.** The pipeline outputs only the *sparse* SfM point cloud — the set of triangulated SIFT keypoints. A typical 640×480 image produces ~1,000–8,000 keypoints; MVS (PMVS, PatchMatch, SGM) would produce 50,000–300,000 densely matched points from the same image set. The sparse cloud is unsuitable for mesh generation, surface area measurement, or visual comparison with ground truth.
+**✅ NEW — MVS Densification implemented (`sfm/mvs.py`):**
+The pipeline now includes a StereoSGBM-based dense reconstruction stage (`--dense` flag). For each registered camera pair exceeding a minimum baseline threshold, the pipeline: rectifies the stereo pair, computes Semi-Global Block Matching disparity, back-projects to 3-D, and filters by depth validity. This provides dense coverage orders of magnitude beyond the sparse SIFT keypoints.
+
+**Remaining gaps:**
+- GPU PatchMatch stereo (COLMAP's `patch_match_stereo`) is far more accurate and complete than StereoSGBM — accessible via `--backend colmap-mvs`.
 - Mesh reconstruction (Poisson surface, Marching Cubes, Delaunay).
 - Normal estimation for mesh quality.
 - Confidence / weight per point.
 - Per-vertex scale from triangulation (useful for noise assessment).
-- Camera frustum / camera path export.
 
 ---
 
@@ -274,7 +308,7 @@ SIFT (1999/2004) is the foundation on which all modern methods were built and re
 
 For a direct comparison: on the HPatches benchmark (Balntas et al., 2017), standard SIFT achieves ~55% mean matching accuracy at threshold 3px under viewpoint change; SuperPoint achieves ~68%; DISK (Tyszkiewicz et al., 2020) ~73%; ALIKED (Zhao et al., 2023) ~78%. This 23-percentage-point gap in matching precision translates directly to fewer verified pairs and less accurate pose estimates.
 
-The GPU path in `feature_extraction.py` is architecturally correct but non-functional (kornia keypoints are computed then discarded, returning CPU SIFT results instead — see `_extract_kornia` lines 165–195).
+**✅ FIXED:** The GPU path in `feature_extraction.py` is now functional. `_extract_kornia()` uses GPU-detected LAF centres and scales to build `cv2.KeyPoint` objects, then calls `sift.compute()` at those positions for descriptors. The GPU path provides genuine acceleration on CUDA hardware.
 
 ---
 
@@ -285,14 +319,14 @@ The GPU path in `feature_extraction.py` is architecturally correct but non-funct
 | Correct-match precision | Basic | Excellent |
 | Wide-baseline coverage | Poor | Good |
 | Repetitive texture handling | Poor | Good |
-| Computational scalability (pair selection) | Poor | Good |
+| Computational scalability (pair selection) | Basic (VocabTree/Sequential avail.) | Good |
 | Guided / epipolar-constrained matching | None | Good |
 
-**Repo score: Poor–Basic**
+**Repo score: Basic** *(upgraded from Poor–Basic: retrieval strategies now available)*
 
-The Lowe ratio test at 0.75 + cross-check is the industry baseline for descriptor matching and works well when descriptors are genuinely distinctive. However:
+The Lowe ratio test at 0.75 + cross-check is the industry baseline for descriptor matching and works well when descriptors are genuinely distinctive.
 
-- **No retrieval.** All N(N-1)/2 pairs are matched exhaustively regardless of whether the images overlap. For N=100, this is 4,950 FLANN queries; for N=200, it is 19,900. Production systems first compute compact image signatures (NetVLAD, DBoW2, image-level CLIP embeddings) to select the ~50 most likely overlapping candidates per image, reducing total matching work by ~97% for large datasets.
+- **✅ UPDATED — Retrieval strategies now available.** `SequentialMatcher` reduces O(N²) to O(N×W) for ordered datasets; `VocabTreeMatcher` implements bag-of-words retrieval (k-means vocabulary + TF-IDF + GPU cosine similarity) reducing pair candidates from O(N²) to O(N×top_k). Default `FeatureMatcher` is still exhaustive — users must opt into the efficient strategies via `--match_strategy`.
 - **No guided matching.** After a camera is registered, its pose and the existing 3-D point cloud can be used to predict where each 3-D point should project in the new image (within a few pixels, accounting for uncertainty). Searching only within those predicted regions dramatically increases match precision and recall. This technique is used by COLMAP's `IncrementalMapper::EstimateAndFindNextBestView`.
 - Learned matchers (SuperGlue, LightGlue) replace the ratio test entirely with a graph neural network over all keypoint pairs simultaneously. On the ETH3D benchmark, LightGlue recovers 3× more inlier matches than SIFT+ratio on challenging image pairs (large viewpoint change, low texture).
 
@@ -308,13 +342,13 @@ The Lowe ratio test at 0.75 + cross-check is the industry baseline for descripto
 | Self-calibration / focal refinement | None | Good–Excellent |
 | Distortion correction | None | Excellent |
 
-**Repo score: Poor–Basic**
+**Repo score: Basic** *(upgraded from Poor–Basic: distortion model and focal refinement now present)*
 
 The dominant accuracy limiters are:
 
-1. **No distortion model.** On a typical 26 mm equivalent phone camera with k1 ≈ -0.10, the radial displacement of a corner pixel is approximately `k1 × r² × r ≈ 0.10 × (0.5)² × 0.5 ≈ 10 mm` at the image edges (where r = normalized radial distance). This translates to 3–8 pixels of systematic reprojection error at image corners, far exceeding the 1 px RANSAC threshold — which means edge-region matches are systematically discarded as outliers, reducing the effective field of view used for pose estimation.
+1. ~~**No distortion model.**~~ **✅ PARTIALLY FIXED:** k1, k2 radial coefficients are now in the BA parameter vector and `undistort_points()` is applied before RANSAC. The principal point (cx, cy) remains fixed at image center (see GAP-NEW-1).
 
-2. **No focal length refinement in BA.** The heuristic `f = max(H, W)` can be 15–25% wrong for common cameras. A 20% focal length error propagates as a ~20% error in triangulated depth, which propagates into all subsequent PnP operations.
+2. ~~**No focal length refinement in BA.**~~ **✅ FIXED:** Focal length f is now jointly optimized in BA alongside extrinsics and distortion coefficients. EXIF-based initialization further reduces the starting bias.
 
 3. **No local BA.** Without local BA, each camera's pose at registration time is based on noisy initial triangulation. Global BA every 5 cameras allows these errors to accumulate, and the 5-camera lag means 4 cameras have sub-optimal poses driving their triangulation steps.
 
@@ -325,7 +359,7 @@ The dominant accuracy limiters are:
 | Aspect | This Repo | SotA |
 |--------|-----------|------|
 | Final reprojection RMSE (well-cond. input) | ~1.0–2.0 px | < 0.3 px |
-| Optimization scope | Basic (K fixed) | Excellent (K + dist) |
+| Optimization scope | Basic (f + k1/k2; cx/cy fixed) | Excellent (K + dist) |
 | Robustness to initialization | Good | Excellent |
 | Performance (time/memory) | Poor (Python scipy) | Excellent (Ceres C++) |
 | Local + global BA cascade | None | Excellent |
@@ -334,7 +368,7 @@ The dominant accuracy limiters are:
 
 The BA implementation is mathematically sound. The vectorized Rodrigues rotation and explicit Jacobian sparsity mean it converges to the correct local minimum for the *problem as formulated*. The Huber loss correctly handles outlier observations.
 
-However, the *problem as formulated* is fundamentally limited: because K and distortion are not in the optimization vector, the best achievable RMSE on real imagery is bounded below by the systematic distortion error — roughly 0.5–3 px depending on lens. COLMAP routinely achieves < 0.3 px RMSE because BA jointly optimizes all camera intrinsics, extrinsics, and 3-D points.
+**✅ UPDATED:** Focal length f and radial coefficients k1, k2 are now in the optimization vector, substantially narrowing the gap with COLMAP. The remaining intrinsic gaps are the principal point (cx, cy) and tangential distortion (p1, p2). COLMAP routinely achieves < 0.3 px RMSE because BA jointly optimizes all camera intrinsics, extrinsics, and 3-D points; this repo should now approach 0.5–1.0 px on well-photographed scenes.
 
 The scipy TRF solver is correct but slow. For a problem with C=50 cameras and P=5,000 points (300,000 parameters), Ceres LM completes global BA in ~2–5 seconds on a modern CPU. scipy TRF on the same problem would take 30–120 seconds due to Python dispatch overhead on each residual evaluation, despite the vectorized residual implementation.
 
@@ -380,11 +414,11 @@ The final PLY output contains only triangulated SIFT keypoints. The `filter_outl
 | Matching time complexity | O(N²) | O(N log N) with retrieval |
 | BA time for 100 cams, 10K pts | ~60–300 s | ~2–10 s (Ceres) |
 | Memory for 200 images | Moderate (< 8 GB) | Optimized |
-| GPU acceleration (actual) | None (path broken) | Full (COLMAP, RC) |
+| GPU acceleration (actual) | Basic (feature detect + matching) | Full (COLMAP, RC) |
 
-**Repo score: Poor**
+**Repo score: Poor** *(unchanged — VocabTree/Sequential help for matching but BA and _get_corr scalability are still O(N²))*
 
-The pipeline becomes impractical above approximately 100–150 images due to: (a) O(N²) exhaustive matching in pure Python, (b) scipy BA overhead growing as O((6C + 3P)²) per iteration, and (c) the unoptimized `_get_corr` scan that is O(N²) per registration step. COLMAP has demonstrated successful reconstructions of 100,000-image datasets using vocabulary tree retrieval and distributed BA; this pipeline would likely OOM or timeout before reaching 300 images.
+The pipeline becomes impractical above approximately 100–150 images. With `--match_strategy vocab_tree`, the matching stage now scales sub-quadratically. However: (a) the default exhaustive matcher remains O(N²), (b) scipy BA overhead grows as O((6C + 3P)²) per iteration, and (c) the unoptimized `_get_corr` scan is O(N²) per registration step. COLMAP has demonstrated successful reconstructions of 100,000-image datasets using vocabulary tree retrieval and distributed BA; this pipeline would likely OOM or timeout before reaching 300 images on the Python backend. The COLMAP backend (`--backend colmap`) handles large datasets.
 
 ---
 
@@ -409,96 +443,42 @@ USAC_MAGSAC for F estimation is the strongest robustness feature in the pipeline
 
 ### 🔴 CRITICAL IMPACT
 
-#### GAP-1: No Camera Distortion Model
+#### ~~GAP-1: No Camera Distortion Model~~ — ✅ SUBSTANTIALLY ADDRESSED
 
-**Description:** The entire pipeline assumes a perfect pinhole camera. All real cameras have radial distortion (k1, k2) that displaces pixels by 3–15 px at image corners. This error contaminates every epipolar constraint, triangulation, and BA residual.
+**Status:** `sfm/bundle_adjustment.py` now jointly optimizes focal length + k1 + k2 per camera. `geometric_verification.py` applies `undistort_points()` before RANSAC. `sfm/utils.py` reads EXIF focal length.
 
-**Quality impact:** Critical — prevents sub-pixel accuracy on any real dataset.
+**Remaining sub-gap (GAP-NEW-1):** Principal point (cx, cy) not in BA parameter vector. Only 9 DOF per camera [rvec(3), tvec(3), f, k1, k2] rather than the full 11 DOF [rvec(3), tvec(3), fx, fy, cx, cy, k1, k2].
 
-**SotA solution:** COLMAP uses a `SimplePinholeCamera`, `PinholeCameraModel` (k1,k2), `RadialCameraModel` (k1,k2,k3), `OpenCVCameraModel` (k1,k2,p1,p2) + `FullOpenCV` depending on what EXIF and calibration data indicate.
+**Quality impact of remaining gap:** Medium — cx/cy offset is typically small (< 1–2% of image dimensions) on modern cameras, but fixing it would further reduce systematic residuals.
 
-**Implementation complexity:** Medium — distortion forward/backward projection math is well-known; the challenge is adding k1, k2 to the BA parameter vector and computing ∂(u,v)/∂k1, ∂(u,v)/∂k2 analytically for the Jacobian.
-
-**Code-level suggestion:**
+**Implementation path:**
 ```python
-# In bundle_adjustment.py: extend cam_params to 8 DOF [rvec, tvec, fx, k1, k2]
-# In utils.py: add estimate_intrinsics_from_exif() using piexif
-# In point_cloud.py and reconstruction.py: call cv2.undistortPoints before 
-#   passing to any OpenCV geometric function
+# In bundle_adjustment.py: extend cam_params from 9 to 11 DOF
+# Add cx, cy to param_vec; extend Jacobian with ∂(u,v)/∂cx and ∂(u,v)/∂cy
+# (Both are trivially ±1 in image coordinates)
 ```
 
 ---
 
-#### GAP-2: No MVS / Dense Reconstruction
+#### ~~GAP-2: No MVS / Dense Reconstruction~~ — ✅ ADDRESSED (StereoSGBM)
 
-**Description:** Output is sparse SIFT keypoints only. No depth maps, no surface reconstruction, no dense cloud.
+**Status:** `sfm/mvs.py` implements a StereoSGBM dense reconstruction pipeline. Use `--dense` for the Python backend. For higher-quality GPU PatchMatch stereo, use `--backend colmap-mvs` which invokes COLMAP's `patch_match_stereo` + `stereo_fusion`.
 
-**Quality impact:** Critical for any application requiring surface geometry.
-
-**SotA solution:** COLMAP PatchMatchStereo (GPU), OpenMVS, SMVS, CN-MVSNet, SimpleRecon.
-
-**Implementation complexity:** Hard for native implementation; Medium if wrapping OpenMVS or using depth-map libraries.
-
-**Code-level suggestion:**
-```python
-# Minimum viable MVS: add a new stage 6b using OpenMVS Python bindings
-# or export COLMAP-compatible cameras.bin/images.bin/points3D.bin
-# and call OpenMVS densify_point_cloud as a subprocess
-```
+**Remaining gap:** StereoSGBM produces depth maps for image *pairs* only; it does not perform multi-view depth fusion. COLMAP's PatchMatch fuses constraints from multiple views, producing a substantially denser and more accurate cloud. For production use, `--backend colmap-mvs` is recommended when a CUDA GPU is available.
 
 ---
 
 ### 🟠 HIGH IMPACT
 
-#### GAP-3: No EXIF-Based Focal Length + No K Refinement in BA
+#### ~~GAP-3: No EXIF-Based Focal Length + No K Refinement in BA~~ — ✅ ADDRESSED
 
-**Description:** Focal length is estimated from image dimensions with up to 25% error. K is never refined by BA.
-
-**Quality impact:** High — systematic depth error propagates into all pose and point estimates.
-
-**SotA solution:** COLMAP reads EXIF focal length (in 35mm-equivalent mm), converts to pixels, and uses it as K initialization. K (fx, fy, cx, cy) + distortion are jointly optimized in BA.
-
-**Implementation complexity:** Easy (EXIF reading) + Medium (add fx/fy/cx/cy to BA vector).
-
-**Code-level suggestion:**
-```python
-# In utils.py:
-from PIL import Image
-def estimate_intrinsics(image_path, image_shape):
-    try:
-        exif = Image.open(image_path).getexif()
-        focal_35mm = exif.get(0xa405)  # FocalLengthIn35mmFilm tag
-        if focal_35mm:
-            h, w = image_shape[:2]
-            sensor_diag = sqrt(36**2 + 24**2)  # full-frame 35mm diagonal
-            image_diag = sqrt(w**2 + h**2)
-            focal_px = focal_35mm / sensor_diag * image_diag
-            ...
-    except: pass
-```
+**Status:** `utils.read_exif_focal_px()` reads `FocalLengthIn35mmFilm` EXIF tag and converts to pixel units. `bundle_adjustment.py` now jointly optimizes focal length f alongside poses and distortion coefficients. Principal point (cx, cy) is still fixed — see GAP-NEW-1.
 
 ---
 
-#### GAP-4: Exhaustive Pairwise Matching — No Retrieval
+#### ~~GAP-4: Exhaustive Pairwise Matching — No Retrieval~~ — ✅ ADDRESSED
 
-**Description:** All N(N-1)/2 image pairs are matched regardless of overlap probability. Impractical for N > 150.
-
-**Quality impact:** High — limits the pipeline to small datasets.
-
-**SotA solution:** NetVLAD (Arandjelović et al., 2016) or DBoW2 vocabulary tree to compute image-level descriptors in O(N) and retrieve the top-k candidates per image in O(N log N).
-
-**Implementation complexity:** Medium — FAISS + PCA-compressed SIFT aggregates (VLAD/FV) can be added in ~300 lines; NetVLAD requires a pre-trained PyTorch model.
-
-**Code-level suggestion:**
-```python
-# In feature_matching.py: add SequentialMatcher (pairs consecutive images)
-# and VocabTreeMatcher using FAISS IVF + PQ on mean-pooled descriptors
-class SequentialMatcher(FeatureMatcher):
-    def match_all(self, features, window=5):
-        pairs = [(i, j) for i in range(len(features))
-                 for j in range(i+1, min(i+window+1, len(features)))]
-        ...
-```
+**Status:** `SequentialMatcher` (sliding window) and `VocabTreeMatcher` (bag-of-words retrieval with GPU cosine similarity) are both implemented in `feature_matching.py`. Select via `--match_strategy sequential` or `--match_strategy vocab_tree`.
 
 ---
 
@@ -647,32 +627,145 @@ if ok and inliers is not None and len(inliers) >= 6:
 
 ---
 
+### 🆕 NEW GAPS (identified in 2026-05-12 re-audit)
+
+#### GAP-NEW-1: Principal Point (cx, cy) Not Optimized in BA
+
+**Description:** The BA parameter vector is `[rvec(3), tvec(3), f, k1, k2]` = 9 DOF per camera. The principal point (cx, cy) is fixed at `(W/2, H/2)` and never refined. For cameras whose optical center deviates more than ~1% of image dimensions from the image center (common on phone cameras with asymmetric lens assemblies), this introduces a residual systematic pose bias.
+
+**Quality impact:** Low–Medium — cx/cy offset is typically < 1–2% on modern cameras, but fixing it would reduce systematic residuals on wide-angle and telephoto lenses.
+
+**Implementation path:**
+```python
+# In bundle_adjustment.py: extend cam_params from 9 to 11 DOF
+# Add cx, cy to param_vec; extend Jacobian with ∂(u,v)/∂cx and ∂(u,v)/∂cy
+# (Both are trivially ±1 in image coordinates before focal scaling)
+```
+
+---
+
+#### GAP-NEW-2: No Hartley Normalization Before F/E RANSAC
+
+**Description:** Pixel coordinates are passed directly to `findFundamentalMat` and `findEssentialMat` without centering and scaling. Hartley (1997) proved that the condition number of the DLT system is orders of magnitude better with normalized coordinates (centroid → origin, mean distance → √2). This affects numerical accuracy on wide-resolution images (e.g., 4K or higher) where pixel coordinates span thousands of units.
+
+**Quality impact:** Medium — manifests as increased RANSAC iterations required and slightly less accurate F/E estimates on high-resolution inputs. On 1080p inputs the effect is modest; on 4K+ it can be significant.
+
+**Reference:** Hartley, R. (1997). In defense of the eight-point algorithm. *IEEE TPAMI*, 19(6), 580–593.
+
+**Implementation path:**
+```python
+# In geometric_verification.py: add normalize_points() and denormalize_F()
+def _normalize_points(pts):
+    """Hartley normalization: center + scale to mean dist √2."""
+    centroid = pts.mean(axis=0)
+    pts_c = pts - centroid
+    scale = np.sqrt(2.0) / np.maximum(np.linalg.norm(pts_c, axis=1).mean(), 1e-9)
+    T = np.array([[scale, 0, -scale * centroid[0]],
+                  [0, scale, -scale * centroid[1]],
+                  [0, 0, 1.0]])
+    return (pts_c * scale), T
+# F_denorm = T2.T @ F_norm @ T1
+```
+
+---
+
+#### GAP-NEW-3: E-Matrix Estimation Uses cv2.RANSAC Instead of USAC_MAGSAC
+
+**Description:** `findFundamentalMat` uses `cv2.USAC_MAGSAC` (state-of-the-art), but `findEssentialMat` uses `cv2.RANSAC`. This inconsistency means the pose-critical E estimation step uses an inferior estimator compared to F. The E-inlier set directly seeds `cv2.recoverPose` and is the tightest quality gate before camera registration.
+
+**Quality impact:** Medium — USAC_MAGSAC has better inlier recovery on noisy correspondences, so E-inliers are currently slightly under-estimated.
+
+**Implementation path:**
+```python
+# In geometric_verification.py _estimate_essential():
+method = cv2.USAC_MAGSAC if hasattr(cv2, 'USAC_MAGSAC') else cv2.RANSAC
+E, mask_E = cv2.findEssentialMat(pts1_u, pts2_u, K, method=method,
+                                  prob=0.9999, threshold=1.0)
+```
+
+---
+
+#### GAP-NEW-4: No SO(3) Re-Orthogonalization After BA
+
+**Description:** After BA update steps, Rodrigues vectors are decoded to rotation matrices with `cv2.Rodrigues`. Small floating-point errors in the Rodrigues optimization path can leave R with `det(R) ≈ 1 ± ε` and non-unit row/column norms. SVD-based projection back onto SO(3) (`R = U @ Vt` from `U, S, Vt = np.linalg.svd(R_approx)`) is a one-liner that guarantees exact orthogonality.
+
+**Quality impact:** Low — numerical drift is typically < 1e-6 and rarely causes visible artifacts. However, it is a mathematical correctness issue that compounds over many BA iterations in long sequences.
+
+**Reference:** Grassia, F.S. (1998). Practical parameterization of rotations using the exponential map. *J. Graphics Tools*, 3(3), 29–48.
+
+**Implementation path:**
+```python
+# In bundle_adjustment.py _unpack_params() or after BA solve:
+U, S, Vt = np.linalg.svd(R)
+R_ortho = U @ Vt
+if np.linalg.det(R_ortho) < 0:
+    R_ortho = U @ np.diag([1, 1, -1]) @ Vt
+```
+
+---
+
+#### GAP-NEW-5: No Pipeline Checkpointing / --resume
+
+**Description:** If the pipeline crashes or is interrupted mid-run (e.g., after feature extraction, during reconstruction), there is no way to resume — the entire pipeline must restart from scratch including expensive feature extraction and matching steps.
+
+**Quality impact:** Low for correctness, High for usability on large datasets where extraction + matching can take hours.
+
+**Implementation path:** Serialize extracted features, verified pairs, and reconstruction state to disk after each major stage. Add `--resume` flag that loads from checkpoint if available.
+
+---
+
+#### GAP-NEW-6: No Input Validation at Pipeline Entry
+
+**Description:** The pipeline accepts `--image_dir` without verifying that the directory exists, contains supported image formats, or has the minimum number of images required for reconstruction (≥ 2). Invalid inputs produce cryptic errors deep in the pipeline rather than actionable error messages at startup.
+
+**Quality impact:** Low for technical correctness, High for usability.
+
+**Implementation path:**
+```python
+# In run_sfm.py, before pipeline start:
+def validate_inputs(image_dir, output_path):
+    if not os.path.isdir(image_dir):
+        raise ValueError(f"Image directory not found: {image_dir}")
+    images = [f for f in os.listdir(image_dir)
+              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tif', '.tiff'))]
+    if len(images) < 2:
+        raise ValueError(f"Need ≥ 2 images, found {len(images)} in {image_dir}")
+```
+
+---
+
 ## 5. Overall Quality Rating
 
-### 🟠 Research Prototype
+### 🟡 Approaching Solid Open Source *(upgraded from 🟠 Research Prototype)*
 
-> The mathematics are correct, the architecture mirrors the classic incremental SfM algorithm, and the implementation is clean and readable. On well-photographed, well-lit, richly textured scenes with < 80 images, it will produce a geometrically plausible sparse point cloud. However, it will fail or produce poor results on the vast majority of real-world photogrammetry tasks due to the absent distortion model, missing MVS, and O(N²) scalability ceiling.
+> The mathematics are correct, the architecture mirrors the classic incremental SfM algorithm, and the implementation is clean and readable. Four of the five originally identified blocking gaps have been addressed: radial distortion + focal length are now in BA, EXIF initialization is implemented, MVS densification is available, and both sequential and vocabulary-tree matching strategies are provided. On well-photographed, well-lit, richly textured scenes, the pipeline now produces geometrically accurate sparse reconstructions and can optionally produce dense point clouds.
 
-**Evidence for this rating:**
+**Evidence for upgraded rating:**
 - ✅ All fundamental algorithmic steps are present and mathematically correct.
 - ✅ USAC_MAGSAC for F estimation is genuinely state-of-the-art.
 - ✅ Vectorized BA with Jacobian sparsity is correctly implemented.
 - ✅ The integration test demonstrates successful end-to-end reconstruction.
-- ❌ No distortion model — fails on any real lens with k1 > 0.02 (essentially all cameras).
-- ❌ No MVS — output density is 2–3 orders of magnitude below practical requirements.
-- ❌ O(N²) matching limits practical use to < 150 images.
-- ❌ No K refinement in BA — systematic focal error is irreducible.
+- ✅ Radial distortion (k1, k2) in BA — systematic corner distortion error substantially reduced.
+- ✅ EXIF focal length initialization — eliminates 15–25% systematic depth error on cameras with EXIF data.
+- ✅ MVS densification available — StereoSGBM Python backend + COLMAP GPU PatchMatch via `--backend colmap-mvs`.
+- ✅ Sequential + VocabTree matching — enables large ordered and unordered datasets.
+- ✅ GPU feature detection and matching — functional on CUDA hardware.
+- ⚠️ Principal point (cx, cy) still fixed — residual systematic bias for off-center lenses.
+- ⚠️ No local BA — drift accumulates between global BA passes.
+- ⚠️ No Hartley normalization — numerical stability degraded on high-resolution inputs.
 - ❌ No loop closure — drift in long sequences is uncorrected.
+- ❌ O(N²) Python BA limits scalability to < 150 cameras on pure-Python backend.
 
-**Comparison with VisualSFM (Wu, 2011):** VisualSFM (the pre-COLMAP gold standard, circa 2011) had GPU SIFT, vocabulary tree matching, SBA bundle adjustment, and PMVS integration. This repo lacks all four of those advantages that a 2011-era system already had.
+**Comparison with Bundler (Snavely et al., 2006) + PMVS (Furukawa & Ponce, 2010):** This repo is now broadly comparable to the Bundler era (2006–2010) in algorithmic scope. The key remaining gaps versus Bundler are local BA and union-find track building.
 
-### What is needed to reach 🟡 Solid Open Source:
+### What is needed to reach 🟢 Solid Open Source:
 
-1. Add radial distortion (k1, k2) to BA and undistort before geometric verification.
-2. Add EXIF focal length reading + K refinement in BA.
-3. Replace exhaustive matching with sequential + vocabulary-tree retrieval.
-4. Add local BA after each camera registration.
-5. These four changes together would bring quality and robustness close to early COLMAP / Bundler (2010) era.
+1. Add local BA after each camera registration (highest-priority remaining gap).
+2. Add Hartley normalization + USAC_MAGSAC for E-matrix estimation.
+3. Add principal point (cx, cy) to BA parameter vector.
+4. Add covisibility graph for O(degree) correspondence lookup.
+5. Add SO(3) re-orthogonalization after BA.
+6. These changes together would bring quality and robustness close to early COLMAP (2016) on moderate-scale datasets.
 
 ---
 
@@ -737,26 +830,26 @@ Scoring: ❌ None · ⚠️ Poor · 🔵 Basic · 🟡 Good · ✅ Excellent
 | Dimension | **This Repo** | COLMAP | OpenSfM | Meshroom | RealityCapture | hloc |
 |-----------|:---:|:---:|:---:|:---:|:---:|:---:|
 | Feature quality | 🔵 SIFT | 🟡 SIFT+GPU | 🟡 Multi | 🟡 Multi | ✅ Prop. | ✅ SuperPoint |
-| Matching strategy | ⚠️ Exhaustive | 🟡 VocabTree | 🟡 Graph | 🟡 ANN | ✅ Prop. | ✅ SuperGlue |
-| Camera model | ⚠️ Pinhole only | ✅ Full dist. | ✅ Fisheye | ✅ Multi | ✅ Full | ✅ Full |
+| Matching strategy | 🔵 VocabTree avail. | 🟡 VocabTree | 🟡 Graph | 🟡 ANN | ✅ Prop. | ✅ SuperGlue |
+| Camera model | 🔵 Pinhole+k1k2 | ✅ Full dist. | ✅ Fisheye | ✅ Multi | ✅ Full | ✅ Full |
 | Geometric verification | 🟡 MAGSAC | ✅ LO-RANSAC | 🟡 RANSAC | 🟡 RANSAC | ✅ Prop. | ✅ MAGSAC+ |
 | Bundle adjustment | 🔵 scipy TRF | ✅ Ceres LM | ✅ Ceres | 🟡 Custom | ✅ Prop. | ✅ Ceres |
-| K + distortion in BA | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| K + distortion in BA | 🔵 f+k1k2 only | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Local BA | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Loop closure | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Dense MVS output | ❌ | ✅ | ⚠️ | ✅ | ✅ | ❌ |
+| Dense MVS output | 🔵 StereoSGBM | ✅ | ⚠️ | ✅ | ✅ | ❌ |
 | Mesh generation | ❌ | 🔵 | ❌ | ✅ | ✅ | ❌ |
 | Scalability (N images) | ⚠️ < 150 | ✅ > 50,000 | ✅ > 10,000 | 🟡 > 1,000 | ✅ > 50,000 | 🟡 > 1,000 |
-| GPU acceleration | ⚠️ Broken | ✅ | 🔵 | 🔵 | ✅ | ✅ |
-| **Overall** | 🟠 Research | ✅ SotA | ✅ SotA | 🟡 Solid | ✅ SotA | ✅ SotA |
+| GPU acceleration | 🔵 Partial | ✅ | 🔵 | 🔵 | ✅ | ✅ |
+| **Overall** | 🟡 Approaching Solid | ✅ SotA | ✅ SotA | 🟡 Solid | ✅ SotA | ✅ SotA |
 
 ---
 
 ### Key Takeaway
 
-This codebase is a **complete, educationally valuable, and mathematically correct implementation** of incremental SfM. Every stage is present, the code is clean, and the architectural choices (USAC_MAGSAC, Huber loss, Jacobian sparsity, EPNP) reflect genuine knowledge of the literature. It will reconstruct well-photographed, richly textured, small-scale scenes with < 100 images.
+This codebase is a **complete, educationally valuable, and mathematically correct implementation** of incremental SfM. Every stage is present, the code is clean, and the architectural choices (USAC_MAGSAC, Huber loss, Jacobian sparsity, EPNP) reflect genuine knowledge of the literature. Following recent improvements, it now handles lens distortion (k1, k2), EXIF focal initialization, sequential/vocabulary-tree matching, and MVS densification.
 
-The path to practical utility runs through three non-negotiable upgrades: **(1) add lens distortion to BA**, **(2) optimize K jointly**, and **(3) integrate MVS densification**. These three changes, estimated at 4–6 weeks of focused engineering, would elevate the pipeline to 🟡 **Solid Open Source** quality — genuinely useful for hobbyist photogrammetry and comparable to Bundler + PMVS circa 2010–2012.
+It will reconstruct well-photographed, richly textured scenes with moderate overlap and up to ~150 images on the Python backend (unlimited via `--backend colmap`). For practical photogrammetry applications, the remaining critical gaps are: **(1) local BA after each camera registration**, **(2) Hartley normalization + USAC_MAGSAC for E-matrix**, and **(3) covisibility graph for scalable correspondence lookup**. Addressing these three items, estimated at 2–3 weeks of focused engineering, would elevate the pipeline to 🟢 **Solid Open Source** quality — comparable to early COLMAP circa 2016.
 
 ---
 
