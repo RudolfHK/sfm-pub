@@ -24,6 +24,7 @@ observations: list of (img_idx, pt_3d_idx, x, y)   used by BA
 """
 
 import logging
+from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 import cv2
@@ -215,6 +216,20 @@ class IncrementalSfM:
         self.observations: List[Tuple]                = []
         self.kp_to_3d:     Dict[Tuple[int,int], int]  = {}
 
+        # Covisibility graph: img_idx → {img_idx, ...} for all images that share
+        # at least one triangulated 3-D point. Maintained incrementally in _add_obs.
+        # Reduces _count_corr and _triangulate_new_points from O(N_pairs) to O(degree).
+        self.covisibility: Dict[int, Set[int]] = defaultdict(set)
+        # Reverse map: 3-D point index → set of image indices that observe it.
+        self._pt_observers: Dict[int, Set[int]] = defaultdict(set)
+        # Pair index: img_idx → list of (i, j) verified pairs involving that image.
+        # Built once from verified_pairs and used to avoid O(N²) pair scanning.
+        self._pairs_by_img: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+        for pair_key in self.verified_pairs:
+            i, j = pair_key
+            self._pairs_by_img[i].append(pair_key)
+            self._pairs_by_img[j].append(pair_key)
+
         self._ba              = BundleAdjuster()
         self._cams_since_ba   = 0
 
@@ -379,9 +394,15 @@ class IncrementalSfM:
         return (best_idx, best_n) if best_idx is not None else None
 
     def _count_corr(self, img_idx: int) -> int:
-        """Count 2D-3D correspondences available for img_idx."""
+        """Count 2D-3D correspondences available for img_idx.
+
+        Uses _pairs_by_img to iterate only O(degree) pairs instead of
+        all O(N²) verified pairs, giving O(degree × N_matches) complexity.
+        """
         seen: Set[int] = set()
-        for (i, j), data in self.verified_pairs.items():
+        for pair_key in self._pairs_by_img[img_idx]:
+            i, j = pair_key
+            data = self.verified_pairs[pair_key]
             other, self_col, other_col = self._pair_roles(img_idx, i, j)
             if other is None or other not in self.cameras:
                 continue
@@ -455,7 +476,9 @@ class IncrementalSfM:
         seen_pt3d: Set[int] = set()
         kps_ud = self._undist_kps[img_idx]
 
-        for (i, j), data in self.verified_pairs.items():
+        for pair_key in self._pairs_by_img[img_idx]:
+            i, j = pair_key
+            data = self.verified_pairs[pair_key]
             other, self_col, other_col = self._pair_roles(img_idx, i, j)
             if other is None or other not in self.cameras:
                 continue
@@ -502,7 +525,9 @@ class IncrementalSfM:
         kps_n_orig = self.features[new_idx]["keypoints"]
         n_new = 0
 
-        for (i, j), data in self.verified_pairs.items():
+        for pair_key in self._pairs_by_img[new_idx]:
+            i, j = pair_key
+            data = self.verified_pairs[pair_key]
             other, self_col, other_col = self._pair_roles(new_idx, i, j)
             if other is None or other not in self.cameras:
                 continue
@@ -751,3 +776,12 @@ class IncrementalSfM:
         self.observations.append(
             (img_idx, pt3d_idx, float(pt2d[0]), float(pt2d[1]))
         )
+        # Maintain covisibility: img_idx becomes covisible with every image
+        # that already observes the same 3-D point. Uses a set to skip
+        # duplicate updates when _add_obs is called multiple times for the
+        # same (img_idx, pt3d_idx) pair.
+        if img_idx not in self._pt_observers[pt3d_idx]:
+            for other_img in self._pt_observers[pt3d_idx]:
+                self.covisibility[img_idx].add(other_img)
+                self.covisibility[other_img].add(img_idx)
+            self._pt_observers[pt3d_idx].add(img_idx)
