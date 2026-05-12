@@ -4,7 +4,14 @@ run_sfm.py — Structure from Motion pipeline entry point.
 
 Usage
 -----
+    # Pure-Python backend (default)
     python run_sfm.py --image_dir ./images --output output.ply
+
+    # COLMAP sparse reconstruction
+    python run_sfm.py --image_dir ./images --output output.ply --backend colmap
+
+    # COLMAP sparse + dense (MVS) reconstruction
+    python run_sfm.py --image_dir ./images --output output.ply --backend colmap-mvs
 
 Run `python run_sfm.py --help` for all options.
 """
@@ -20,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Pure-Python incremental Structure from Motion pipeline.",
+        description="Structure from Motion pipeline — pure-Python or COLMAP backend.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
@@ -30,6 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--output", default="output.ply",
         help="Output PLY file path (sparse cloud, or dense when --dense is set).",
+    )
+    # Backend selection
+    p.add_argument(
+        "--backend",
+        choices=["python", "colmap", "colmap-mvs"],
+        default="python",
+        help=(
+            "Reconstruction backend.  "
+            "'python' = built-in incremental SfM (default);  "
+            "'colmap' = COLMAP sparse reconstruction;  "
+            "'colmap-mvs' = COLMAP sparse + dense (patch-match MVS, requires CUDA)."
+        ),
     )
     # Feature extraction
     p.add_argument(
@@ -154,6 +173,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--viz-seed", type=int, default=42, metavar="N",
         help="Random seed for reproducible image/pair sampling.",
     )
+
+    # ── COLMAP options (ignored unless --backend colmap / colmap-mvs) ─────
+    col = p.add_argument_group(
+        "COLMAP options (ignored unless --backend colmap or colmap-mvs)"
+    )
+    col.add_argument(
+        "--colmap-bin", default="colmap", metavar="PATH",
+        help="Path to the COLMAP executable (default: 'colmap' on PATH).",
+    )
+    col.add_argument(
+        "--colmap-workspace", default=None, metavar="DIR",
+        help=(
+            "Directory for COLMAP's internal database and sparse model.  "
+            "Defaults to <output_dir>/colmap_workspace/."
+        ),
+    )
+    col.add_argument(
+        "--colmap-keep-workspace", action="store_true",
+        help="Keep the COLMAP workspace after a successful run (useful for debugging).",
+    )
+    col.add_argument(
+        "--colmap-vocab-tree", default=None, metavar="PATH",
+        help=(
+            "Path to a pre-built COLMAP vocabulary tree file (.bin).  "
+            "Required when --match_strategy vocab_tree is used with the COLMAP backend.  "
+            "Download from: https://demuc.de/colmap/#download"
+        ),
+    )
     return p
 
 
@@ -165,10 +212,38 @@ def main(argv=None) -> int:
     setup_logging(args.verbose)
 
     logger.info("=" * 62)
-    logger.info("  Structure from Motion Pipeline")
+    logger.info("  Structure from Motion Pipeline  [backend: %s]", args.backend)
     logger.info("=" * 62)
 
     t_total = time.time()
+
+    # ── COLMAP backend — short-circuit the Python pipeline ────────────────
+    if args.backend in ("colmap", "colmap-mvs"):
+        from sfm.colmap_backend import ColmapRunner
+        runner = ColmapRunner(
+            args,
+            colmap_bin      = args.colmap_bin,
+            workspace       = args.colmap_workspace,
+            keep_workspace  = args.colmap_keep_workspace,
+        )
+        try:
+            runner.run()
+        except Exception as exc:
+            logger.error("COLMAP pipeline failed: %s", exc)
+            import traceback
+            traceback.print_exc()
+            return 1
+        elapsed = time.time() - t_total
+        logger.info("\n" + "=" * 62)
+        logger.info("  COLMAP pipeline complete in %.1fs", elapsed)
+        logger.info("  Sparse PLY : %s", Path(args.output).resolve())
+        if args.backend == "colmap-mvs" or args.dense:
+            dense_out = args.dense_output or str(
+                Path(args.output).parent / f"{Path(args.output).stem}_dense.ply"
+            )
+            logger.info("  Dense  PLY : %s", dense_out)
+        logger.info("=" * 62)
+        return 0
 
     # ── Imports (deferred so --help is instant) ───────────────────────────
     from sfm.feature_extraction    import FeatureExtractor
