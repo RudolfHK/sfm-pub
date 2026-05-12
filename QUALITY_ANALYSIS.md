@@ -23,11 +23,13 @@
 - ✅ **COLMAP backend** — `sfm/colmap_backend.py`: `--backend colmap / colmap-mvs` routes through COLMAP CLI with PLY output compatible with existing tooling.
 - 🟡 **Quality tier updated: 🟠 Research Prototype → 🟡 Approaching Solid Open Source** — four of the five originally identified blocking gaps have been addressed or substantially narrowed. Remaining critical gaps: principal point not in BA, no covisibility graph / local BA, no Hartley normalization, no LO-RANSAC on E matrix.
 - 🆕 **New gap identified:** Principal point (cx, cy) not refined in BA — only focal length f is optimized.
-- 🆕 **New gap identified:** E-matrix estimation uses `cv2.RANSAC` instead of USAC_MAGSAC — inconsistent with F-matrix path.
-- 🆕 **New gap identified:** No Hartley normalization (coordinate centering/scaling) before F/E RANSAC — numerical stability issue for wide-resolution images.
-- 🆕 **New gap identified:** No SO(3) re-orthogonalization after BA — Rodrigues vectors decode directly to R without SVD projection back to SO(3).
-- 🆕 **New gap identified:** No pipeline checkpointing — crash mid-run requires restarting from scratch.
-- 🆕 **New gap identified:** No input validation at pipeline entry.
+- 🆕 **New gap identified:** E-matrix estimation uses `cv2.RANSAC` instead of USAC_MAGSAC — inconsistent with F-matrix path. **→ ✅ FIXED on `feature/robustness-improvements`**
+- 🆕 **New gap identified:** No Hartley normalization (coordinate centering/scaling) before F/E RANSAC — numerical stability issue for wide-resolution images. **→ ✅ FIXED on `feature/robustness-improvements`**
+- 🆕 **New gap identified:** No SO(3) re-orthogonalization after BA — Rodrigues vectors decode directly to R without SVD projection back to SO(3). **→ ✅ FIXED on `feature/robustness-improvements`**
+- 🆕 **New gap identified:** No pipeline checkpointing — crash mid-run requires restarting from scratch. **→ ✅ FIXED on `feature/robustness-improvements`**
+- 🆕 **New gap identified:** No input validation at pipeline entry. **→ ✅ FIXED on `feature/robustness-improvements`**
+- ✅ **Covisibility graph implemented** — `_pairs_by_img` pair index + `covisibility` dict added to `IncrementalSfM`. Reduces `_count_corr` / `_triangulate_new_points` from O(N²) to O(degree). **`feature/robustness-improvements`**
+- ✅ **Adaptive Huber f_scale implemented** — BA f_scale now computed from 1.4826 × MAD of initial residuals instead of fixed 2.0 px. **`feature/robustness-improvements`**
 
 ---
 
@@ -595,13 +597,9 @@ if ok and inliers is not None and len(inliers) >= 6:
 
 ---
 
-#### GAP-11: No Covisibility Graph
+#### ~~GAP-11: No Covisibility Graph~~ — ✅ IMPLEMENTED
 
-**Description:** O(N²) scanning in `_get_corr` and `_count_corr` becomes the dominant runtime cost once the reconstruction exceeds ~50 cameras. A covisibility graph (`{img_idx: set_of_covisible_img_idxs}`, updated incrementally) reduces this to O(degree).
-
-**Quality impact:** Medium for correctness; High for performance.
-
-**Implementation complexity:** Easy — add a `defaultdict(set)` maintained during `_add_point`/`_link_kp`.
+**Status:** `_pairs_by_img` inverted index (image → list of verified pairs) and `covisibility` dict (image → set of covisible images) both added to `IncrementalSfM.__init__`. `_count_corr`, `_get_corr`, and `_triangulate_new_points` now iterate `_pairs_by_img[img_idx]` instead of all verified pairs, reducing complexity from O(N²) to O(degree). `covisibility` is maintained in `_add_obs` for future local BA. Implemented on `feature/robustness-improvements`.
 
 ---
 
@@ -644,93 +642,39 @@ if ok and inliers is not None and len(inliers) >= 6:
 
 ---
 
-#### GAP-NEW-2: No Hartley Normalization Before F/E RANSAC
+#### ~~GAP-NEW-2: No Hartley Normalization Before F/E RANSAC~~ — ✅ IMPLEMENTED
 
-**Description:** Pixel coordinates are passed directly to `findFundamentalMat` and `findEssentialMat` without centering and scaling. Hartley (1997) proved that the condition number of the DLT system is orders of magnitude better with normalized coordinates (centroid → origin, mean distance → √2). This affects numerical accuracy on wide-resolution images (e.g., 4K or higher) where pixel coordinates span thousands of units.
-
-**Quality impact:** Medium — manifests as increased RANSAC iterations required and slightly less accurate F/E estimates on high-resolution inputs. On 1080p inputs the effect is modest; on 4K+ it can be significant.
+**Status:** `_hartley_normalize()` added to `geometric_verification.py`. Applied before `findFundamentalMat`; F is de-normalized via `T2.T @ F_norm @ T1`. Implemented on `feature/robustness-improvements`.
 
 **Reference:** Hartley, R. (1997). In defense of the eight-point algorithm. *IEEE TPAMI*, 19(6), 580–593.
 
-**Implementation path:**
-```python
-# In geometric_verification.py: add normalize_points() and denormalize_F()
-def _normalize_points(pts):
-    """Hartley normalization: center + scale to mean dist √2."""
-    centroid = pts.mean(axis=0)
-    pts_c = pts - centroid
-    scale = np.sqrt(2.0) / np.maximum(np.linalg.norm(pts_c, axis=1).mean(), 1e-9)
-    T = np.array([[scale, 0, -scale * centroid[0]],
-                  [0, scale, -scale * centroid[1]],
-                  [0, 0, 1.0]])
-    return (pts_c * scale), T
-# F_denorm = T2.T @ F_norm @ T1
-```
+---
+
+#### ~~GAP-NEW-3: E-Matrix Estimation Uses cv2.RANSAC Instead of USAC_MAGSAC~~ — ✅ IMPLEMENTED
+
+**Status:** `findEssentialMat` now uses `cv2.USAC_MAGSAC` when available (falls back to `cv2.RANSAC` on older OpenCV). Additionally, the E step now uses the already-undistorted F-inlier subset `pts1[mask_f]` / `pts2[mask_f]` instead of re-fetching from original distorted keypoints, making the full verification chain consistent. Implemented on `feature/robustness-improvements`.
+
+**Reference:** Barath et al. (2020). MAGSAC++: A fast, reliable and accurate robust estimator. *CVPR 2020*.
 
 ---
 
-#### GAP-NEW-3: E-Matrix Estimation Uses cv2.RANSAC Instead of USAC_MAGSAC
+#### ~~GAP-NEW-4: No SO(3) Re-Orthogonalization After BA~~ — ✅ IMPLEMENTED
 
-**Description:** `findFundamentalMat` uses `cv2.USAC_MAGSAC` (state-of-the-art), but `findEssentialMat` uses `cv2.RANSAC`. This inconsistency means the pose-critical E estimation step uses an inferior estimator compared to F. The E-inlier set directly seeds `cv2.recoverPose` and is the tightest quality gate before camera registration.
-
-**Quality impact:** Medium — USAC_MAGSAC has better inlier recovery on noisy correspondences, so E-inliers are currently slightly under-estimated.
-
-**Implementation path:**
-```python
-# In geometric_verification.py _estimate_essential():
-method = cv2.USAC_MAGSAC if hasattr(cv2, 'USAC_MAGSAC') else cv2.RANSAC
-E, mask_E = cv2.findEssentialMat(pts1_u, pts2_u, K, method=method,
-                                  prob=0.9999, threshold=1.0)
-```
-
----
-
-#### GAP-NEW-4: No SO(3) Re-Orthogonalization After BA
-
-**Description:** After BA update steps, Rodrigues vectors are decoded to rotation matrices with `cv2.Rodrigues`. Small floating-point errors in the Rodrigues optimization path can leave R with `det(R) ≈ 1 ± ε` and non-unit row/column norms. SVD-based projection back onto SO(3) (`R = U @ Vt` from `U, S, Vt = np.linalg.svd(R_approx)`) is a one-liner that guarantees exact orthogonality.
-
-**Quality impact:** Low — numerical drift is typically < 1e-6 and rarely causes visible artifacts. However, it is a mathematical correctness issue that compounds over many BA iterations in long sequences.
+**Status:** SVD-based projection back to SO(3) added after every `cv2.Rodrigues` decode in `bundle_adjustment.py`: `U, _, Vt = np.linalg.svd(R); R = U @ Vt`. Determinant guard handles improper-rotation edge case. Implemented on `feature/robustness-improvements`.
 
 **Reference:** Grassia, F.S. (1998). Practical parameterization of rotations using the exponential map. *J. Graphics Tools*, 3(3), 29–48.
 
-**Implementation path:**
-```python
-# In bundle_adjustment.py _unpack_params() or after BA solve:
-U, S, Vt = np.linalg.svd(R)
-R_ortho = U @ Vt
-if np.linalg.det(R_ortho) < 0:
-    R_ortho = U @ np.diag([1, 1, -1]) @ Vt
-```
+---
+
+#### ~~GAP-NEW-5: No Pipeline Checkpointing / --resume~~ — ✅ IMPLEMENTED
+
+**Status:** `--checkpoint-dir DIR` and `--resume` flags added to `run_sfm.py`. Stage 2 (feature extraction) and Stage 3 (feature matching) are checkpointed to pickle files with an image-set hash manifest. Stale checkpoints (from a different image set) are automatically detected and discarded. Implemented on `feature/robustness-improvements`.
 
 ---
 
-#### GAP-NEW-5: No Pipeline Checkpointing / --resume
+#### ~~GAP-NEW-6: No Input Validation at Pipeline Entry~~ — ✅ IMPLEMENTED
 
-**Description:** If the pipeline crashes or is interrupted mid-run (e.g., after feature extraction, during reconstruction), there is no way to resume — the entire pipeline must restart from scratch including expensive feature extraction and matching steps.
-
-**Quality impact:** Low for correctness, High for usability on large datasets where extraction + matching can take hours.
-
-**Implementation path:** Serialize extracted features, verified pairs, and reconstruction state to disk after each major stage. Add `--resume` flag that loads from checkpoint if available.
-
----
-
-#### GAP-NEW-6: No Input Validation at Pipeline Entry
-
-**Description:** The pipeline accepts `--image_dir` without verifying that the directory exists, contains supported image formats, or has the minimum number of images required for reconstruction (≥ 2). Invalid inputs produce cryptic errors deep in the pipeline rather than actionable error messages at startup.
-
-**Quality impact:** Low for technical correctness, High for usability.
-
-**Implementation path:**
-```python
-# In run_sfm.py, before pipeline start:
-def validate_inputs(image_dir, output_path):
-    if not os.path.isdir(image_dir):
-        raise ValueError(f"Image directory not found: {image_dir}")
-    images = [f for f in os.listdir(image_dir)
-              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tif', '.tiff'))]
-    if len(images) < 2:
-        raise ValueError(f"Need ≥ 2 images, found {len(images)} in {image_dir}")
-```
+**Status:** `_validate_inputs(args)` added to `run_sfm.py`, called before any heavy imports. Checks: image_dir existence, ≥ 2 supported images, output dir writability, numerical parameter bounds, COLMAP executable availability. Implemented on `feature/robustness-improvements`.
 
 ---
 
