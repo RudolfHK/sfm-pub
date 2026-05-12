@@ -258,7 +258,114 @@ def build_parser() -> argparse.ArgumentParser:
             "Download from: https://demuc.de/colmap/#download"
         ),
     )
+
+    # ── Checkpointing ────────────────────────────────────────────────────
+    ckpt = p.add_argument_group("checkpointing")
+    ckpt.add_argument(
+        "--checkpoint-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory to store / load stage checkpoints (features and matches).  "
+            "Defaults to <output_dir>/.sfm_checkpoints/.  "
+            "Checkpoints are automatically invalidated when the image set changes."
+        ),
+    )
+    ckpt.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume from the most recent valid checkpoint, skipping already-completed "
+            "stages (feature extraction, matching).  Has no effect if no valid "
+            "checkpoint exists for the current image set."
+        ),
+    )
     return p
+
+
+_SUPPORTED_EXT = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"})
+
+
+def _validate_inputs(args) -> "Optional[str]":
+    """
+    Validate CLI arguments before any expensive work begins.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+
+    Returns
+    -------
+    str  — human-readable error message if validation fails
+    None — all checks passed
+    """
+    import os
+    import shutil
+
+    # 1 — Image directory
+    if not os.path.isdir(args.image_dir):
+        return f"Image directory not found: {args.image_dir!r}"
+
+    images = [
+        f for f in os.listdir(args.image_dir)
+        if os.path.splitext(f.lower())[1] in _SUPPORTED_EXT
+    ]
+    if len(images) < 2:
+        exts = ", ".join(sorted(_SUPPORTED_EXT))
+        return (
+            f"Need ≥ 2 images in {args.image_dir!r}, "
+            f"found {len(images)} supported file(s) (supported extensions: {exts})"
+        )
+
+    # 2 — Output parent directory (create if missing, check write access)
+    out_parent = os.path.dirname(os.path.abspath(args.output)) or "."
+    try:
+        os.makedirs(out_parent, exist_ok=True)
+    except OSError as exc:
+        return f"Cannot create output directory {out_parent!r}: {exc}"
+    if not os.access(out_parent, os.W_OK):
+        return f"Output directory {out_parent!r} is not writable"
+
+    # 3 — Numerical parameter bounds
+    checks = [
+        (0.0 < args.ratio < 1.0,
+         f"--ratio must be in (0, 1), got {args.ratio}"),
+        (args.min_inliers >= 8,
+         f"--min_inliers must be ≥ 8 (5-pt algorithm minimum), got {args.min_inliers}"),
+        (args.ransac_thr > 0,
+         f"--ransac_thr must be > 0, got {args.ransac_thr}"),
+        (args.max_reproj_error > 0,
+         f"--max_reproj_error must be > 0, got {args.max_reproj_error}"),
+        (args.n_features >= 100,
+         f"--n_features must be ≥ 100, got {args.n_features}"),
+        (args.sequential_window >= 1,
+         f"--sequential_window must be ≥ 1, got {args.sequential_window}"),
+        (args.vocab_words >= 4,
+         f"--vocab_words must be ≥ 4, got {args.vocab_words}"),
+        (args.vocab_top_k >= 1,
+         f"--vocab_top_k must be ≥ 1, got {args.vocab_top_k}"),
+        (args.ba_interval >= 1,
+         f"--ba_interval must be ≥ 1, got {args.ba_interval}"),
+    ]
+    for ok, msg in checks:
+        if not ok:
+            return msg
+
+    # 4 — COLMAP-specific checks
+    if args.backend in ("colmap", "colmap-mvs"):
+        if shutil.which(args.colmap_bin) is None and not os.path.isfile(args.colmap_bin):
+            return (
+                f"COLMAP executable not found: {args.colmap_bin!r}. "
+                "Install COLMAP and ensure it is on PATH, "
+                "or specify the full path with --colmap-bin."
+            )
+        if args.match_strategy == "vocab_tree" and args.colmap_vocab_tree is None:
+            return (
+                "--match_strategy vocab_tree with the COLMAP backend requires "
+                "--colmap-vocab-tree PATH (download from demuc.de/colmap/#download)."
+            )
+
+    return None
 
 
 def main(argv=None) -> int:
@@ -268,6 +375,12 @@ def main(argv=None) -> int:
     from sfm.utils import setup_logging
 
     setup_logging(args.verbose)
+
+    # ── Input validation (fast checks before any heavy imports) ──────────
+    err = _validate_inputs(args)
+    if err is not None:
+        logger.error("Input validation failed: %s", err)
+        return 1
 
     logger.info("=" * 62)
     logger.info("  Structure from Motion Pipeline  [backend: %s]", args.backend)
