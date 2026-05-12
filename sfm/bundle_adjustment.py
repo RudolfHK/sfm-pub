@@ -326,6 +326,19 @@ class BundleAdjuster:
             f"({n_cameras} cams, {n_points} pts, {len(valid_obs)} obs)"
         )
 
+        # Adaptive Huber scale: use 1.4826 × MAD of initial residuals.
+        # 1.4826 is the consistency factor for a Gaussian distribution
+        # (MAD → σ conversion), so f_scale ≈ 1 σ of the inlier noise.
+        # This adapts to the actual reprojection noise rather than using
+        # a fixed 2.0 px threshold.  Clamp to [0.5, 10.0] for safety.
+        # Reference: Hampel et al. (1986) "Robust Statistics: The Approach
+        #   Based on Influence Functions." Wiley.
+        abs_res = np.abs(res_init)
+        mad     = float(np.median(abs_res))
+        f_scale_adaptive = float(np.clip(1.4826 * mad, 0.5, 10.0))
+        f_scale_used = f_scale_adaptive if self.f_scale == 2.0 else self.f_scale
+        logger.debug(f"  BA  Huber f_scale: {f_scale_used:.3f} px (MAD={mad:.3f})")
+
         J_sparse = _build_sparsity_v2(
             n_cameras, n_points, cam_indices, pt_indices, refine_intrinsics
         )
@@ -338,7 +351,7 @@ class BundleAdjuster:
                 jac_sparsity=J_sparse,
                 method="trf",
                 loss=self.loss,
-                f_scale=self.f_scale,
+                f_scale=f_scale_used,
                 max_nfev=self.max_nfev * len(x0),
                 ftol=self.ftol,
                 gtol=self.gtol,
@@ -376,6 +389,15 @@ class BundleAdjuster:
         for c_key, c_idx in cam_to_idx.items():
             rvec = opt_cam[c_idx, :3].reshape(3, 1)
             R, _ = cv2.Rodrigues(rvec)
+            # Project R back onto SO(3) to correct floating-point drift.
+            # After TRF update steps det(R) can deviate from 1 by ~1e-6.
+            # SVD projection is the exact nearest orthogonal matrix.
+            # Reference: Grassia (1998) "Practical parameterization of
+            #   rotations using the exponential map." J. Graphics Tools 3(3).
+            U, _, Vt = np.linalg.svd(R)
+            R = U @ Vt
+            if np.linalg.det(R) < 0:
+                R = U @ np.diag([1.0, 1.0, -1.0]) @ Vt
             t    = opt_cam[c_idx, 3:].reshape(3, 1)
             updated_cameras[c_key] = {
                 "R": R,
