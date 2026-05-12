@@ -20,7 +20,10 @@ Run `python run_sfm.py --help` for all options.
 """
 
 import argparse
+import hashlib
 import logging
+import os
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -368,6 +371,74 @@ def _validate_inputs(args) -> "Optional[str]":
     return None
 
 
+def _image_set_hash(image_paths: list) -> str:
+    """
+    Compute a short hash over the sorted image filenames and their sizes.
+    Used to invalidate checkpoints when the image set changes.
+    """
+    h = hashlib.md5()
+    for p in sorted(str(p) for p in image_paths):
+        h.update(p.encode())
+        try:
+            h.update(str(os.path.getsize(p)).encode())
+        except OSError:
+            pass
+    return h.hexdigest()[:16]
+
+
+def _ckpt_dir(args) -> Path:
+    """Resolve the checkpoint directory."""
+    if args.checkpoint_dir:
+        return Path(args.checkpoint_dir)
+    return Path(args.output).parent / ".sfm_checkpoints"
+
+
+def _save_checkpoint(ckpt_dir: Path, name: str, data, img_hash: str) -> None:
+    """
+    Pickle `data` to ckpt_dir/<name>.pkl alongside a manifest with img_hash.
+
+    Parameters
+    ----------
+    ckpt_dir : directory to write into (created if missing)
+    name     : stage name, e.g. 'features' or 'matches'
+    data     : picklable object to save
+    img_hash : image-set hash for invalidation on load
+    """
+    try:
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        payload = {"img_hash": img_hash, "data": data}
+        with open(ckpt_dir / f"{name}.pkl", "wb") as fh:
+            pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        logger.info("  Checkpoint saved: %s/%s.pkl", ckpt_dir, name)
+    except Exception as exc:
+        logger.warning("  Could not save checkpoint %s: %s", name, exc)
+
+
+def _load_checkpoint(ckpt_dir: Path, name: str, img_hash: str):
+    """
+    Load a checkpoint if it exists and its image-set hash matches.
+
+    Returns the stored data object, or None if unavailable / stale.
+    """
+    path = ckpt_dir / f"{name}.pkl"
+    if not path.exists():
+        return None
+    try:
+        with open(path, "rb") as fh:
+            payload = pickle.load(fh)
+        if payload.get("img_hash") != img_hash:
+            logger.info(
+                "  Checkpoint %s is stale (image set changed) — will recompute.",
+                name,
+            )
+            return None
+        logger.info("  Loaded checkpoint: %s/%s.pkl", ckpt_dir, name)
+        return payload["data"]
+    except Exception as exc:
+        logger.warning("  Could not load checkpoint %s: %s", name, exc)
+        return None
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -458,6 +529,9 @@ def main(argv=None) -> int:
         logger.error("Need at least 2 images for reconstruction.")
         return 1
 
+    ckpt_dir  = _ckpt_dir(args)
+    img_hash  = _image_set_hash(image_paths)
+
     sample = load_image(image_paths[0])
     K = estimate_intrinsics(sample.shape, image_path=image_paths[0])
     dist_coeffs = np.zeros(4, dtype=np.float64)  # refined later by BA if enabled
@@ -479,10 +553,17 @@ def main(argv=None) -> int:
     # Stage 2 — Feature extraction
     # ─────────────────────────────────────────────────────────────────────
     logger.info("\n[2/6]  Feature extraction…")
-    t = time.time()
-    extractor = FeatureExtractor(n_features=args.n_features)
-    features = extractor.extract_all(image_paths)
-    logger.info(f"       Done in {time.time()-t:.1f}s")
+    features = None
+    if args.resume:
+        features = _load_checkpoint(ckpt_dir, "features", img_hash)
+    if features is None:
+        t = time.time()
+        extractor = FeatureExtractor(n_features=args.n_features)
+        features = extractor.extract_all(image_paths)
+        logger.info(f"       Done in {time.time()-t:.1f}s")
+        _save_checkpoint(ckpt_dir, "features", features, img_hash)
+    else:
+        logger.info("       Skipped (loaded from checkpoint)")
 
     total_kps = sum(len(f["keypoints"]) for f in features.values())
     logger.info(f"       {total_kps:,} keypoints total")
@@ -497,28 +578,39 @@ def main(argv=None) -> int:
     # Stage 3 — Feature matching
     # ─────────────────────────────────────────────────────────────────────
     logger.info(f"\n[3/6]  Feature matching  [{args.match_strategy}]…")
-    t = time.time()
-
-    common_kw = dict(
-        ratio_threshold=args.ratio,
-        cross_check=True,
-        min_matches=args.min_matches,
-    )
-    if args.match_strategy == "sequential":
-        matcher = SequentialMatcher(window=args.sequential_window, **common_kw)
-    elif args.match_strategy == "vocab_tree":
-        matcher = VocabTreeMatcher(
-            n_words=args.vocab_words,
-            top_k=args.vocab_top_k,
-            **common_kw,
+    # Include strategy + key params in the checkpoint key so changing
+    # --match_strategy or --ratio correctly triggers a re-match.
+    match_ckpt_key = f"matches_{args.match_strategy}_r{args.ratio:.3f}"
+    all_matches = None
+    if args.resume:
+        all_matches = _load_checkpoint(ckpt_dir, match_ckpt_key, img_hash)
+    if all_matches is None:
+        t = time.time()
+        common_kw = dict(
+            ratio_threshold=args.ratio,
+            cross_check=True,
+            min_matches=args.min_matches,
         )
-    else:
-        matcher = FeatureMatcher(**common_kw)
+        if args.match_strategy == "sequential":
+            matcher = SequentialMatcher(window=args.sequential_window, **common_kw)
+        elif args.match_strategy == "vocab_tree":
+            matcher = VocabTreeMatcher(
+                n_words=args.vocab_words,
+                top_k=args.vocab_top_k,
+                **common_kw,
+            )
+        else:
+            matcher = FeatureMatcher(**common_kw)
 
-    all_matches = matcher.match_all(features)
-    logger.info(
-        f"       Done in {time.time()-t:.1f}s — {len(all_matches)} pairs retained"
-    )
+        all_matches = matcher.match_all(features)
+        logger.info(
+            f"       Done in {time.time()-t:.1f}s — {len(all_matches)} pairs retained"
+        )
+        _save_checkpoint(ckpt_dir, match_ckpt_key, all_matches, img_hash)
+    else:
+        logger.info(
+            f"       Skipped (loaded from checkpoint — {len(all_matches)} pairs)"
+        )
 
     if viz is not None:
         try:
