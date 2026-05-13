@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ─── GPU detection ───────────────────────────────────────────────────────────
 
+
 def _cuda_available() -> bool:
     """Return True when a usable CUDA device is present."""
     if has_gpu():
@@ -32,6 +33,7 @@ def _cuda_available() -> bool:
 
 
 # ─── Extractor ───────────────────────────────────────────────────────────────
+
 
 class FeatureExtractor:
     """
@@ -46,11 +48,28 @@ class FeatureExtractor:
     def __init__(
         self,
         n_features: int = 8_000,
+        sift_contrast_threshold: float = 0.04,
+        sift_edge_threshold: float = 10.0,
+        sift_n_octave_layers: int = 3,
+        sift_sigma: float = 1.6,
         use_cuda: Optional[bool] = None,
     ) -> None:
         self.n_features = n_features
+        self.sift_contrast_threshold = sift_contrast_threshold
+        self.sift_edge_threshold = sift_edge_threshold
+        self.sift_n_octave_layers = sift_n_octave_layers
+        self.sift_sigma = sift_sigma
         self.use_cuda = _cuda_available() if use_cuda is None else use_cuda
         self._backend = self._init_backend()
+
+    def _sift_kwargs(self) -> dict:
+        return {
+            "nfeatures": self.n_features,
+            "nOctaveLayers": self.sift_n_octave_layers,
+            "contrastThreshold": self.sift_contrast_threshold,
+            "edgeThreshold": self.sift_edge_threshold,
+            "sigma": self.sift_sigma,
+        }
 
     # ── initialisation ────────────────────────────────────────────────────
 
@@ -61,13 +80,7 @@ class FeatureExtractor:
                 return backend
             logger.warning("No GPU backend available — falling back to CPU SIFT.")
 
-        self._sift = cv2.SIFT_create(
-            nfeatures=self.n_features,
-            nOctaveLayers=3,
-            contrastThreshold=0.04,
-            edgeThreshold=10,
-            sigma=1.6,
-        )
+        self._sift = cv2.SIFT_create(**self._sift_kwargs())
         logger.info("Feature extraction backend: OpenCV SIFT (CPU)")
         return "cpu_sift"
 
@@ -76,11 +89,14 @@ class FeatureExtractor:
         try:
             import torch
             import kornia.feature as KF  # noqa: F401
+
             self._torch = torch
             self._KF = KF
             # CPU SIFT computes descriptors at GPU-detected keypoint locations.
-            self._sift = cv2.SIFT_create(nfeatures=self.n_features)
-            logger.info("Feature extraction backend: kornia (GPU keypoints + CPU SIFT descriptors)")
+            self._sift = cv2.SIFT_create(**self._sift_kwargs())
+            logger.info(
+                "Feature extraction backend: kornia (GPU keypoints + CPU SIFT descriptors)"
+            )
             return "kornia"
         except Exception:
             pass
@@ -97,9 +113,7 @@ class FeatureExtractor:
 
     # ── public API ────────────────────────────────────────────────────────
 
-    def extract(
-        self, image: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def extract(self, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Extract keypoints + descriptors from a BGR image."""
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -130,9 +144,9 @@ class FeatureExtractor:
             img = load_image(path)
             kps, descs = self.extract(img)
             features[idx] = {
-                "keypoints":   kps,
+                "keypoints": kps,
                 "descriptors": descs,
-                "image_path":  Path(path),
+                "image_path": Path(path),
                 "image_shape": img.shape,
             }
             logger.debug(f"    → {len(kps)} keypoints")
@@ -143,9 +157,7 @@ class FeatureExtractor:
 
     # ── backends ─────────────────────────────────────────────────────────
 
-    def _extract_sift_cpu(
-        self, gray: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def _extract_sift_cpu(self, gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         kps_cv, descs = self._sift.detectAndCompute(gray, None)
         if not kps_cv:
             return (
@@ -155,9 +167,7 @@ class FeatureExtractor:
         pts = np.array([kp.pt for kp in kps_cv], dtype=np.float32)
         return pts, descs.astype(np.float32)
 
-    def _extract_kornia(
-        self, gray: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def _extract_kornia(self, gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         GPU keypoint detection via kornia ScaleSpaceDetector.
         Descriptors are computed by OpenCV SIFT at the GPU-detected positions.
@@ -232,9 +242,7 @@ class FeatureExtractor:
             logger.warning(f"kornia GPU extraction failed ({e}), using CPU SIFT")
             return self._extract_sift_cpu(gray)
 
-    def _extract_surf_gpu(
-        self, gray: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def _extract_surf_gpu(self, gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         try:
             gpu_img = cv2.cuda_GpuMat()
             gpu_img.upload(gray)
@@ -248,6 +256,6 @@ class FeatureExtractor:
             return pts, descs.astype(np.float32)
         except Exception as e:
             logger.warning(f"CUDA SURF failed ({e}), falling back to CPU SIFT")
-            self._sift = cv2.SIFT_create(nfeatures=self.n_features)
+            self._sift = cv2.SIFT_create(**self._sift_kwargs())
             self._backend = "cpu_sift"
             return self._extract_sift_cpu(gray)

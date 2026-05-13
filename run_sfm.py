@@ -27,6 +27,7 @@ import pickle
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,36 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8_000,
         help="Max SIFT features extracted per image. Examples typically have 2k-10k features per image; set higher for large scenes with lots of texture, lower for speed on small/simple scenes.",
+    )
+    p.add_argument(
+        "--sift-contrast-threshold",
+        type=float,
+        default=0.04,
+        help=(
+            "SIFT contrast threshold. Lower values detect more low-contrast keypoints "
+            "(often more features, but noisier)."
+        ),
+    )
+    p.add_argument(
+        "--sift-edge-threshold",
+        type=float,
+        default=10.0,
+        help=(
+            "SIFT edge threshold. Higher values keep more edge-like keypoints "
+            "(often more features, but can include unstable points)."
+        ),
+    )
+    p.add_argument(
+        "--sift-n-octave-layers",
+        type=int,
+        default=3,
+        help="Number of SIFT octave layers. Higher values can produce more features.",
+    )
+    p.add_argument(
+        "--sift-sigma",
+        type=float,
+        default=1.6,
+        help="Sigma of the Gaussian applied at octave 0 for SIFT.",
     )
     # Matching strategy
     p.add_argument(
@@ -289,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
 _SUPPORTED_EXT = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"})
 
 
-def _validate_inputs(args) -> "Optional[str]":
+def _validate_inputs(args) -> Optional[str]:
     """
     Validate CLI arguments before any expensive work begins.
 
@@ -310,7 +341,8 @@ def _validate_inputs(args) -> "Optional[str]":
         return f"Image directory not found: {args.image_dir!r}"
 
     images = [
-        f for f in os.listdir(args.image_dir)
+        f
+        for f in os.listdir(args.image_dir)
         if os.path.splitext(f.lower())[1] in _SUPPORTED_EXT
     ]
     if len(images) < 2:
@@ -331,24 +363,37 @@ def _validate_inputs(args) -> "Optional[str]":
 
     # 3 — Numerical parameter bounds
     checks = [
-        (0.0 < args.ratio < 1.0,
-         f"--ratio must be in (0, 1), got {args.ratio}"),
-        (args.min_inliers >= 8,
-         f"--min_inliers must be ≥ 8 (5-pt algorithm minimum), got {args.min_inliers}"),
-        (args.ransac_thr > 0,
-         f"--ransac_thr must be > 0, got {args.ransac_thr}"),
-        (args.max_reproj_error > 0,
-         f"--max_reproj_error must be > 0, got {args.max_reproj_error}"),
-        (args.n_features >= 100,
-         f"--n_features must be ≥ 100, got {args.n_features}"),
-        (args.sequential_window >= 1,
-         f"--sequential_window must be ≥ 1, got {args.sequential_window}"),
-        (args.vocab_words >= 4,
-         f"--vocab_words must be ≥ 4, got {args.vocab_words}"),
-        (args.vocab_top_k >= 1,
-         f"--vocab_top_k must be ≥ 1, got {args.vocab_top_k}"),
-        (args.ba_interval >= 1,
-         f"--ba_interval must be ≥ 1, got {args.ba_interval}"),
+        (0.0 < args.ratio < 1.0, f"--ratio must be in (0, 1), got {args.ratio}"),
+        (
+            args.min_inliers >= 8,
+            f"--min_inliers must be ≥ 8 (5-pt algorithm minimum), got {args.min_inliers}",
+        ),
+        (args.ransac_thr > 0, f"--ransac_thr must be > 0, got {args.ransac_thr}"),
+        (
+            args.max_reproj_error > 0,
+            f"--max_reproj_error must be > 0, got {args.max_reproj_error}",
+        ),
+        (args.n_features >= 100, f"--n_features must be ≥ 100, got {args.n_features}"),
+        (
+            args.sift_contrast_threshold > 0,
+            f"--sift-contrast-threshold must be > 0, got {args.sift_contrast_threshold}",
+        ),
+        (
+            args.sift_edge_threshold > 0,
+            f"--sift-edge-threshold must be > 0, got {args.sift_edge_threshold}",
+        ),
+        (
+            args.sift_n_octave_layers >= 1,
+            f"--sift-n-octave-layers must be ≥ 1, got {args.sift_n_octave_layers}",
+        ),
+        (args.sift_sigma > 0, f"--sift-sigma must be > 0, got {args.sift_sigma}"),
+        (
+            args.sequential_window >= 1,
+            f"--sequential_window must be ≥ 1, got {args.sequential_window}",
+        ),
+        (args.vocab_words >= 4, f"--vocab_words must be ≥ 4, got {args.vocab_words}"),
+        (args.vocab_top_k >= 1, f"--vocab_top_k must be ≥ 1, got {args.vocab_top_k}"),
+        (args.ba_interval >= 1, f"--ba_interval must be ≥ 1, got {args.ba_interval}"),
     ]
     for ok, msg in checks:
         if not ok:
@@ -356,7 +401,9 @@ def _validate_inputs(args) -> "Optional[str]":
 
     # 4 — COLMAP-specific checks
     if args.backend in ("colmap", "colmap-mvs"):
-        if shutil.which(args.colmap_bin) is None and not os.path.isfile(args.colmap_bin):
+        if shutil.which(args.colmap_bin) is None and not os.path.isfile(
+            args.colmap_bin
+        ):
             return (
                 f"COLMAP executable not found: {args.colmap_bin!r}. "
                 "Install COLMAP and ensure it is on PATH, "
@@ -529,8 +576,8 @@ def main(argv=None) -> int:
         logger.error("Need at least 2 images for reconstruction.")
         return 1
 
-    ckpt_dir  = _ckpt_dir(args)
-    img_hash  = _image_set_hash(image_paths)
+    ckpt_dir = _ckpt_dir(args)
+    img_hash = _image_set_hash(image_paths)
 
     sample = load_image(image_paths[0])
     K = estimate_intrinsics(sample.shape, image_path=image_paths[0])
@@ -558,7 +605,13 @@ def main(argv=None) -> int:
         features = _load_checkpoint(ckpt_dir, "features", img_hash)
     if features is None:
         t = time.time()
-        extractor = FeatureExtractor(n_features=args.n_features)
+        extractor = FeatureExtractor(  # type: ignore[call-arg]
+            n_features=args.n_features,
+            sift_contrast_threshold=args.sift_contrast_threshold,
+            sift_edge_threshold=args.sift_edge_threshold,
+            sift_n_octave_layers=args.sift_n_octave_layers,
+            sift_sigma=args.sift_sigma,
+        )
         features = extractor.extract_all(image_paths)
         logger.info(f"       Done in {time.time()-t:.1f}s")
         _save_checkpoint(ckpt_dir, "features", features, img_hash)
@@ -592,17 +645,18 @@ def main(argv=None) -> int:
             min_matches=args.min_matches,
         )
         if args.match_strategy == "sequential":
-            matcher = SequentialMatcher(window=args.sequential_window, **common_kw)
+            all_matches = SequentialMatcher(
+                window=args.sequential_window,
+                **common_kw,
+            ).match_all(features)
         elif args.match_strategy == "vocab_tree":
-            matcher = VocabTreeMatcher(
+            all_matches = VocabTreeMatcher(
                 n_words=args.vocab_words,
                 top_k=args.vocab_top_k,
                 **common_kw,
-            )
+            ).match_all(features)
         else:
-            matcher = FeatureMatcher(**common_kw)
-
-        all_matches = matcher.match_all(features)
+            all_matches = FeatureMatcher(**common_kw).match_all(features)
         logger.info(
             f"       Done in {time.time()-t:.1f}s — {len(all_matches)} pairs retained"
         )
