@@ -95,6 +95,7 @@ class SfMVisualizer:
             "02_matching",
             "03_reconstruction",
             "04_pointcloud",
+            "05_mesh",
         ):
             (self._out / sub).mkdir(parents=True, exist_ok=True)
 
@@ -227,6 +228,30 @@ class SfMVisualizer:
                     logger.warning(f"[VIZ] Reproj errors for {idx}: {exc}")
         except Exception as exc:
             logger.warning(f"[VIZ] Reconstruction summary failed: {exc}")
+
+    def on_mesh_complete(self, mesh_path, stats: dict) -> None:
+        """
+        Render mesh quality visualizations after mesh reconstruction completes.
+
+        Parameters
+        ----------
+        mesh_path : Path to the saved mesh file.
+        stats     : Stats dict from MeshResult.stats (contains prep, clean, recon sub-dicts).
+        """
+        if not self.enabled:
+            return
+        try:
+            self._render_mesh_cleaning_stats(stats)
+        except Exception as exc:
+            logger.warning(f"[VIZ] mesh_cleaning_stats failed: {exc}")
+        try:
+            self._render_mesh_quality(mesh_path, stats)
+        except Exception as exc:
+            logger.warning(f"[VIZ] mesh_quality failed: {exc}")
+        try:
+            self._render_mesh_6views(mesh_path, stats)
+        except Exception as exc:
+            logger.warning(f"[VIZ] mesh_6views failed: {exc}")
 
     def on_pipeline_complete(
         self,
@@ -1225,6 +1250,158 @@ class SfMVisualizer:
 
         fig.suptitle("SfM Pipeline Summary", fontsize=14, y=1.01)
         self._save_fig(fig, self._out / "00_summary" / f"pipeline_summary.{self._fmt}")
+
+    # ── Mesh visualizations ───────────────────────────────────────────────────
+
+    def _render_mesh_cleaning_stats(self, stats: dict) -> None:
+        """Bar chart of face/vertex counts at each cleaning stage."""
+        clean = stats.get("clean", {})
+        if not clean:
+            return
+
+        stages = []
+        counts = []
+        if "faces_in" in clean:
+            stages.append("Raw"); counts.append(clean["faces_in"])
+        if "after_dedup" in clean:
+            stages.append("After dedup"); counts.append(clean["after_dedup"])
+        if "after_manifold" in clean:
+            stages.append("After manifold"); counts.append(clean["after_manifold"])
+        if "after_components" in clean:
+            stages.append("After components"); counts.append(clean["after_components"])
+        if "after_fill" in clean:
+            stages.append("After fill"); counts.append(clean["after_fill"])
+        if "faces_out" in clean:
+            stages.append("Final"); counts.append(clean["faces_out"])
+
+        if not stages:
+            return
+
+        fig, ax = self._plt.subplots(figsize=(max(8, len(stages) * 1.5), 5))
+        colors = ["#d62728" if i == 0 else "#2ca02c" if i == len(stages) - 1
+                  else "steelblue" for i in range(len(stages))]
+        bars = ax.bar(stages, counts, color=colors, edgecolor="white")
+        for bar, cnt in zip(bars, counts):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + max(counts) * 0.01,
+                f"{cnt:,}",
+                ha="center", va="bottom", fontsize=9,
+            )
+        ax.set_ylabel("Face count")
+        ax.set_title("Mesh cleaning pipeline — face count at each stage", fontsize=11)
+        ax.tick_params(axis="x", rotation=20)
+        ax.grid(True, axis="y", alpha=0.3)
+        fig.tight_layout()
+        self._save_fig(fig, self._out / "05_mesh" / f"mesh_cleaning_stats.{self._fmt}")
+
+    def _render_mesh_quality(self, mesh_path, stats: dict) -> None:
+        """Face area and edge-length distribution histograms."""
+        try:
+            import open3d as o3d
+            mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+            if len(mesh.triangles) == 0:
+                return
+        except Exception:
+            return
+
+        import numpy as np
+        verts = np.asarray(mesh.vertices)
+        tris = np.asarray(mesh.triangles)
+        if len(tris) == 0:
+            return
+
+        v0 = verts[tris[:, 0]]
+        v1 = verts[tris[:, 1]]
+        v2 = verts[tris[:, 2]]
+        cross = np.cross(v1 - v0, v2 - v0)
+        face_areas = np.linalg.norm(cross, axis=1) * 0.5
+
+        e0 = np.linalg.norm(v1 - v0, axis=1)
+        e1 = np.linalg.norm(v2 - v1, axis=1)
+        e2 = np.linalg.norm(v0 - v2, axis=1)
+        edge_lengths = np.concatenate([e0, e1, e2])
+
+        fig, axes = self._plt.subplots(1, 2, figsize=(14, 5))
+        fig.suptitle("Mesh Quality Analysis", fontsize=12)
+
+        ax = axes[0]
+        fa_clip = face_areas[face_areas < np.percentile(face_areas, 99)]
+        ax.hist(fa_clip, bins=80, color="steelblue", edgecolor="none", alpha=0.8)
+        ax.set_xlabel("Face area")
+        ax.set_ylabel("Count")
+        ax.set_title(
+            f"Face area distribution  (n={len(face_areas):,}, "
+            f"mean={face_areas.mean():.4f}, cv={face_areas.std()/max(face_areas.mean(),1e-9):.2f})"
+        )
+        ax.axvline(np.mean(fa_clip), color="red", ls="--", label="mean")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3, axis="y")
+
+        ax2 = axes[1]
+        el_clip = edge_lengths[edge_lengths < np.percentile(edge_lengths, 99)]
+        ax2.hist(el_clip, bins=80, color="#2ca02c", edgecolor="none", alpha=0.8)
+        ax2.set_xlabel("Edge length")
+        ax2.set_ylabel("Count")
+        ax2.set_title(
+            f"Edge length distribution  "
+            f"(mean={edge_lengths.mean():.4f}, cv={edge_lengths.std()/max(edge_lengths.mean(),1e-9):.2f})"
+        )
+        ax2.axvline(np.mean(el_clip), color="red", ls="--", label="mean")
+        ax2.legend(fontsize=8)
+        ax2.grid(True, alpha=0.3, axis="y")
+
+        fig.tight_layout()
+        self._save_fig(fig, self._out / "05_mesh" / f"mesh_quality.{self._fmt}")
+
+    def _render_mesh_6views(self, mesh_path, stats: dict) -> None:
+        """Six orthogonal projections of mesh vertices colored by Z depth."""
+        try:
+            import open3d as o3d
+            mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+            if len(mesh.vertices) == 0:
+                return
+        except Exception:
+            return
+
+        import numpy as np
+        verts = np.asarray(mesh.vertices)
+        if len(verts) > 100_000:
+            idx = self._rng.choice(len(verts), 100_000, replace=False)
+            verts = verts[idx]
+
+        v_min, v_max = verts.min(0), verts.max(0)
+        v_range = np.where((v_max - v_min) > 1e-9, v_max - v_min, 1.0)
+        vn = (verts - v_min) / v_range
+
+        views = [
+            ("Front (XY)",   0, 1, 2),
+            ("Back (-XY)",   0, 1, 2),
+            ("Left (ZY)",    2, 1, 0),
+            ("Right (-ZY)",  2, 1, 0),
+            ("Top (XZ)",     0, 2, 1),
+            ("Bottom (-XZ)", 0, 2, 1),
+        ]
+        signs = [1, -1, 1, -1, 1, -1]
+
+        fig, axes = self._plt.subplots(2, 3, figsize=(18, 11))
+        fig.suptitle(
+            f"Mesh 6-view projections — {len(np.asarray(mesh.vertices)):,} vertices",
+            fontsize=12,
+        )
+
+        for ax, (title, xi, yi, ci), sg in zip(axes.flat, views, signs):
+            x = vn[:, xi] * sg
+            y = vn[:, yi]
+            depth = vn[:, ci]
+            ax.scatter(x, y, c=depth, cmap="viridis", s=0.3, alpha=0.5, rasterized=True)
+            ax.set_title(title, fontsize=9)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_aspect("equal", "datalim")
+
+        fig.tight_layout()
+        self._save_fig(fig, self._out / "05_mesh" / f"mesh_6views.{self._fmt}")
 
     # ── Video / interactive ───────────────────────────────────────────────────
 

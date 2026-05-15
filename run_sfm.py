@@ -293,6 +293,116 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ── Mesh reconstruction (completely optional) ─────────────────────────
+    msh = p.add_argument_group(
+        "mesh reconstruction (all ignored unless --mesh is set)"
+    )
+    msh.add_argument(
+        "--mesh",
+        action="store_true",
+        help=(
+            "Enable mesh reconstruction from the output point cloud.  "
+            "Requires: pip install open3d"
+        ),
+    )
+    msh.add_argument(
+        "--mesh-output",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Output path for the mesh file.  "
+            "Defaults to <output_stem>_mesh.obj.  "
+            "Supported formats: .obj  .ply  .glb  .stl"
+        ),
+    )
+    msh.add_argument(
+        "--mesh-method",
+        choices=["poisson", "bpa", "alpha"],
+        default="poisson",
+        help=(
+            "Surface reconstruction algorithm.  "
+            "'poisson' = Screened Poisson (best for smooth objects, default);  "
+            "'bpa' = Ball-Pivoting (better for thin/open surfaces);  "
+            "'alpha' = Alpha shapes (fast, good for convex/simple objects)."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-quality",
+        choices=["low", "medium", "high", "ultra"],
+        default="medium",
+        help=(
+            "Quality preset controlling all key reconstruction parameters.  "
+            "'low'=fast/coarse  'medium'=balanced (default)  "
+            "'high'=detailed  'ultra'=maximum quality (slow)."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-depth",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Poisson octree depth override (ignores quality preset).  "
+            "Higher = more detail.  Typical range: 8–12."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-no-clean",
+        action="store_true",
+        help="Disable mesh cleaning (raw reconstruction output, not recommended).",
+    )
+    msh.add_argument(
+        "--mesh-smooth",
+        action="store_true",
+        help=(
+            "Apply Taubin smoothing after cleaning.  "
+            "Smoothing is lossy — fine surface detail will be reduced."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-smooth-iterations",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Number of Taubin smoothing iterations (default: 5).",
+    )
+    msh.add_argument(
+        "--mesh-no-texture",
+        action="store_true",
+        help="Skip RGB color projection from point cloud onto mesh vertices.",
+    )
+    msh.add_argument(
+        "--mesh-decimate",
+        action="store_true",
+        help="Reduce polygon count via quadric decimation after reconstruction.",
+    )
+    msh.add_argument(
+        "--mesh-decimate-target",
+        type=int,
+        default=100_000,
+        metavar="N",
+        help="Target face count after decimation (default: 100 000).",
+    )
+    msh.add_argument(
+        "--mesh-fill-holes",
+        action="store_true",
+        default=True,
+        help="Attempt to fill holes in the mesh surface (default: enabled).",
+    )
+    msh.add_argument(
+        "--mesh-keep-pointcloud",
+        action="store_true",
+        help=(
+            "Save the cleaned/prepared point cloud as a separate PLY file "
+            "alongside the mesh output."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-preview",
+        action="store_true",
+        help="Open the mesh in the open3d interactive viewer immediately after generation.",
+    )
+
     # ── Checkpointing ────────────────────────────────────────────────────
     ckpt = p.add_argument_group("checkpointing")
     ckpt.add_argument(
@@ -775,6 +885,7 @@ def main(argv=None) -> int:
     # ─────────────────────────────────────────────────────────────────────
     # Stage 6b — MVS densification (optional)
     # ─────────────────────────────────────────────────────────────────────
+    _dense_out_path = None   # set below if dense succeeds; used by mesh stage
     if args.dense:
         from sfm.mvs import MVSDensifier
 
@@ -794,22 +905,67 @@ def main(argv=None) -> int:
         if len(dense_pts) > 0:
             if args.dense_output is None:
                 out_stem = Path(args.output).stem
-                dense_out_path = str(Path(args.output).parent / f"{out_stem}_dense.ply")
+                _dense_out_path = str(
+                    Path(args.output).parent / f"{out_stem}_dense.ply"
+                )
             else:
-                dense_out_path = args.dense_output
+                _dense_out_path = args.dense_output
 
             try:
-                exporter.save_ply(dense_out_path, dense_pts, dense_colors)
+                exporter.save_ply(_dense_out_path, dense_pts, dense_colors)
                 logger.info(
-                    f"       Dense PLY saved → {dense_out_path}  "
+                    f"       Dense PLY saved → {_dense_out_path}  "
                     f"({len(dense_pts):,} points)"
                 )
             except Exception as exc:
                 logger.error(f"Failed to write dense PLY: {exc}")
+                _dense_out_path = None   # export failed; don't pass bad path to mesh
         else:
             logger.warning("       MVS produced no dense points.")
 
         logger.info(f"       Done in {time.time()-t:.1f}s")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Stage 6c — Mesh reconstruction (optional)
+    # CRITICAL: mesh stage NEVER crashes the main pipeline — the PLY is
+    # already saved.  All mesh errors are logged and swallowed.
+    # ─────────────────────────────────────────────────────────────────────
+    if args.mesh:
+        from sfm.mesh.pipeline import MeshPipeline
+
+        # Prefer the denser cloud if available, otherwise use sparse output
+        _mesh_input = _dense_out_path if _dense_out_path is not None else args.output
+        if args.mesh_output is None:
+            _mesh_out = str(
+                Path(args.output).parent / f"{Path(args.output).stem}_mesh.obj"
+            )
+        else:
+            _mesh_out = args.mesh_output
+
+        try:
+            mesh_pipeline = MeshPipeline(args)
+            mesh_result = mesh_pipeline.run(
+                pointcloud_path=_mesh_input,
+                output_path=_mesh_out,
+            )
+
+            if mesh_result.success:
+                logger.info(f"[MESH] Mesh saved  : {mesh_result.output_path}")
+                logger.info(f"[MESH] Faces       : {mesh_result.face_count:,}")
+                logger.info(f"[MESH] Vertices    : {mesh_result.vertex_count:,}")
+                if viz is not None:
+                    try:
+                        viz.on_mesh_complete(mesh_result.output_path, mesh_result.stats)
+                    except Exception as _e:
+                        logger.warning(f"[VIZ] on_mesh_complete: {_e}")
+            else:
+                logger.warning(f"[MESH] Mesh reconstruction failed: {mesh_result.error}")
+
+        except Exception as exc:
+            logger.warning(f"[MESH] Mesh stage failed unexpectedly: {exc}")
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
 
     # ─────────────────────────────────────────────────────────────────────
     # Visualization — final outputs

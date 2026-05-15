@@ -1,0 +1,6 @@
+# Mesh reconstruction dependencies (optional — only needed with --mesh)
+# Install with: pip install -r requirements-mesh.txt
+
+open3d>=0.17.0
+numpy           # already in requirements.txt; listed here for completeness
+scipy           # KDTree fallback if open3d KDTree is unavailable
