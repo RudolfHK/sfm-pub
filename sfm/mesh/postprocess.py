@@ -86,18 +86,21 @@ def postprocess_mesh(
     # ── 6c: Vertex color transfer from point cloud ─────────────────────────
     if texture and pcd is not None and pcd.has_colors() and len(pcd.points) > 0:
         try:
-            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-            vertices = np.asarray(mesh.vertices)
-            pcd_colors = np.asarray(pcd.colors)   # (N, 3) float64 in [0, 1]
+            from scipy.spatial import cKDTree
 
-            vertex_colors = np.zeros((len(vertices), 3), dtype=np.float64)
-            for vi, vertex in enumerate(vertices):
-                [_, idx, _] = pcd_tree.search_knn_vector_3d(vertex, 1)
-                if len(idx) > 0:
-                    vertex_colors[vi] = pcd_colors[idx[0]]
+            vertices   = np.asarray(mesh.vertices)   # (V, 3)
+            pcd_pts    = np.asarray(pcd.points)       # (P, 3)
+            pcd_colors = np.asarray(pcd.colors)       # (P, 3) float64 [0, 1]
+
+            tree = cKDTree(pcd_pts)
+            _, indices = tree.query(vertices, k=1, workers=-1)
+            vertex_colors = pcd_colors[indices]       # (V, 3) — no Python loop
 
             mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
-            logger.info("[MESH POST] Vertex colors transferred from point cloud")
+            logger.info(
+                "[MESH POST] Vertex colors transferred from point cloud "
+                "(%d vertices, %d cloud points)", len(vertices), len(pcd_pts)
+            )
         except Exception as exc:
             logger.warning("[MESH POST] Color transfer failed: %s", exc)
     elif texture and (pcd is None or not pcd.has_colors()):

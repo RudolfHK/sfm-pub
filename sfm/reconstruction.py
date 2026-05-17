@@ -184,16 +184,18 @@ class IncrementalSfM:
         ba_interval: int = 5,
         dist_coeffs: Optional[np.ndarray] = None,
         refine_intrinsics: bool = True,
+        fix_principal_point: bool = False,
         visualizer=None,
     ) -> None:
-        self.features        = features
-        self.verified_pairs  = verified_pairs
-        self.K               = K.copy()
-        self.max_reproj_err  = max_reproj_error
-        self.ba_interval     = ba_interval
-        self.refine_intrinsics = refine_intrinsics
-        self.viz             = visualizer   # None → all viz calls are skipped
-        self._ba_step        = 0            # running count for viz
+        self.features            = features
+        self.verified_pairs      = verified_pairs
+        self.K                   = K.copy()
+        self.max_reproj_err      = max_reproj_error
+        self.ba_interval         = ba_interval
+        self.refine_intrinsics   = refine_intrinsics
+        self.fix_principal_point = fix_principal_point
+        self.viz                 = visualizer
+        self._ba_step            = 0
 
         if dist_coeffs is None:
             self.dist_coeffs = np.zeros(4, dtype=np.float64)
@@ -230,7 +232,7 @@ class IncrementalSfM:
             self._pairs_by_img[i].append(pair_key)
             self._pairs_by_img[j].append(pair_key)
 
-        self._ba              = BundleAdjuster()
+        self._ba              = BundleAdjuster(fix_principal_point=self.fix_principal_point)
         self._cams_since_ba   = 0
 
     # ── public entry point ────────────────────────────────────────────────
@@ -319,11 +321,86 @@ class IncrementalSfM:
     # ── seed selection ────────────────────────────────────────────────────
 
     def _select_seed_pair(self) -> Tuple[int, int]:
-        """Pick the verified pair with the most inliers."""
-        return max(
-            self.verified_pairs.items(),
-            key=lambda kv: kv[1]["n_inliers"],
-        )[0]
+        """
+        Pick the seed pair by score = baseline × inlier_count, enforcing a
+        minimum median triangulation angle of 5°.  Falls back to max-inlier
+        selection if no pair clears the angle threshold.
+        """
+        _MIN_ANGLE_DEG = 5.0
+
+        best_key = None
+        best_score = -1.0
+        fallback_key = None
+        fallback_score = -1.0
+
+        for pair_key, data in self.verified_pairs.items():
+            n_inliers = data["n_inliers"]
+            t_vec = data["t"]
+            baseline = float(np.linalg.norm(t_vec))
+            score = baseline * n_inliers
+
+            # Fallback: track best by inliers alone (no angle requirement)
+            if n_inliers > fallback_score:
+                fallback_score = n_inliers
+                fallback_key = pair_key
+
+            # Estimate median triangulation angle for this pair
+            i, j = pair_key
+            R_j, t_j = data["R"], data["t"].reshape(3, 1)
+            R_i, t_i = np.eye(3), np.zeros((3, 1))
+            C_i = camera_center(R_i, t_i)
+            C_j = camera_center(R_j, t_j)
+            P_i = projection_matrix(self.K, R_i, t_i)
+            P_j = projection_matrix(self.K, R_j, t_j)
+
+            matches = data["inlier_matches"]
+            if len(matches) == 0:
+                continue
+
+            kps_i = self._undist_kps[i][matches[:, 0].astype(int)]
+            kps_j = self._undist_kps[j][matches[:, 1].astype(int)]
+            X3d, valid = _triangulate_batch(P_i, P_j, kps_i, kps_j)
+            if not valid.any():
+                continue
+
+            X_valid = X3d[valid]
+            r1 = X_valid - C_i
+            r2 = X_valid - C_j
+            n1 = np.linalg.norm(r1, axis=1, keepdims=True).clip(min=1e-10)
+            n2 = np.linalg.norm(r2, axis=1, keepdims=True).clip(min=1e-10)
+            cos_a = np.clip((r1 / n1 * r2 / n2).sum(axis=1), -1.0, 1.0)
+            angles_deg = np.degrees(np.arccos(cos_a))
+            median_angle = float(np.median(angles_deg))
+
+            if median_angle < _MIN_ANGLE_DEG:
+                continue
+
+            if score > best_score:
+                best_score = score
+                best_key = pair_key
+                _best_angle = median_angle
+                _best_baseline = baseline
+                _best_inliers = n_inliers
+
+        if best_key is None:
+            logger.warning(
+                "[SEED] No pair met the %.1f° angle threshold — "
+                "falling back to max-inlier selection.", _MIN_ANGLE_DEG
+            )
+            best_key = fallback_key
+
+        i, j = best_key
+        data = self.verified_pairs[best_key]
+        logger.info(
+            "[SEED] Selected pair (%d, %d): score=%.1f "
+            "(baseline=%.3f, inliers=%d, median_angle=%.1f°)",
+            i, j,
+            best_score if best_key != fallback_key else fallback_score,
+            float(np.linalg.norm(data["t"])),
+            data["n_inliers"],
+            _best_angle if best_key != fallback_key else 0.0,
+        )
+        return best_key
 
     # ── initialisation ────────────────────────────────────────────────────
 
@@ -435,6 +512,26 @@ class IncrementalSfM:
         )
         if not ok or inliers is None or len(inliers) < 6:
             return False
+
+        # LM refinement from EPnP initial estimate (~0.5 px improvement at <1 ms cost)
+        inlier_pts3d = pts3d[inliers.flatten()]
+        inlier_pts2d = pts2d_ud[inliers.flatten()]
+        try:
+            rvec, tvec = cv2.solvePnPRefineLM(
+                inlier_pts3d.reshape(-1, 1, 3),
+                inlier_pts2d.reshape(-1, 1, 2),
+                self.K,
+                self.dist_coeffs,
+                rvec,
+                tvec,
+                criteria=(
+                    cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+                    20,
+                    1e-6,
+                ),
+            )
+        except cv2.error:
+            pass  # fall back to EPnP result if refinement fails
 
         R, _ = cv2.Rodrigues(rvec)
         t    = tvec.reshape(3, 1)

@@ -48,7 +48,7 @@ class FeatureExtractor:
     def __init__(
         self,
         n_features: int = 8_000,
-        sift_contrast_threshold: float = 0.04,
+        sift_contrast_threshold: float = 0.02,
         sift_edge_threshold: float = 10.0,
         sift_n_octave_layers: int = 3,
         sift_sigma: float = 1.6,
@@ -94,8 +94,16 @@ class FeatureExtractor:
             self._KF = KF
             # CPU SIFT computes descriptors at GPU-detected keypoint locations.
             self._sift = cv2.SIFT_create(**self._sift_kwargs())
+
+            device = get_device()
+            self._kornia_detector = KF.ScaleSpaceDetector(
+                num_features=self.n_features,
+                resp_module=KF.BlobDoG(),
+                nms_module=KF.ConvQuadInterp3d(10),
+            ).to(device)
             logger.info(
-                "Feature extraction backend: kornia (GPU keypoints + CPU SIFT descriptors)"
+                "Feature extraction backend: kornia (GPU keypoints + CPU SIFT descriptors) "
+                f"— detector initialized once on {device}"
             )
             return "kornia"
         except Exception:
@@ -103,7 +111,7 @@ class FeatureExtractor:
 
         # Option B: OpenCV CUDA SURF (requires opencv-contrib + CUDA build)
         try:
-            self._surf_gpu = cv2.cuda.SURF_CUDA_create(400, extended=False)
+            self._surf_gpu = cv2.cuda.SURF_CUDA_create(400, extended=True)
             logger.info("Feature extraction backend: OpenCV CUDA SURF")
             return "cuda_surf"
         except Exception:
@@ -190,14 +198,8 @@ class FeatureExtractor:
                 .to(device)
             )
 
-            detector = self._KF.ScaleSpaceDetector(
-                num_features=self.n_features,
-                resp_module=self._KF.BlobDoG(),
-                nms_module=self._KF.ConvQuadInterp3d(10),
-            ).to(device)
-
             with torch.no_grad():
-                lafs, _ = detector(t)
+                lafs, _ = self._kornia_detector(t)
 
             # lafs: (1, N, 2, 3)  — Local Affine Frames
             lafs_cpu = lafs.squeeze(0).cpu()  # (N, 2, 3)
@@ -250,9 +252,6 @@ class FeatureExtractor:
             kps_cv = cv2.cuda_SURF_CUDA.downloadKeypoints(self._surf_gpu, kps_gpu)
             descs = descs_gpu.download()
             pts = np.array([kp.pt for kp in kps_cv], dtype=np.float32)
-            # SURF gives 64-D; pad to 128-D so downstream code is uniform
-            if descs.shape[1] == 64:
-                descs = np.hstack([descs, np.zeros_like(descs)])
             return pts, descs.astype(np.float32)
         except Exception as e:
             logger.warning(f"CUDA SURF failed ({e}), falling back to CPU SIFT")

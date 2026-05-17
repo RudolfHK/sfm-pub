@@ -71,17 +71,21 @@ class MVSDensifier:
         dist_coeffs: Optional[np.ndarray],
         image_paths: Dict[int, Path],
         max_reproj_error: float = 2.0,
+        covisibility_counts: Optional[Dict[Tuple[int, int], int]] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Run dense reconstruction for all valid stereo pairs.
 
         Parameters
         ----------
-        cameras      : {img_idx: {'R':(3,3), 't':(3,1)}}  — registered cameras
-        K            : (3,3) shared intrinsics
-        dist_coeffs  : (4,) or (5,) distortion; None → zero distortion
-        image_paths  : {img_idx: Path}  — paths to the original images
-        max_reproj_error : (unused; kept for API symmetry with other stages)
+        cameras             : {img_idx: {'R':(3,3), 't':(3,1)}}
+        K                   : (3,3) shared intrinsics
+        dist_coeffs         : (4,) or (5,) distortion; None → zero distortion
+        image_paths         : {img_idx: Path}
+        max_reproj_error    : (unused; kept for API symmetry with other stages)
+        covisibility_counts : {(i,j): shared_3d_point_count, i<j} — when provided,
+                              pairs are selected by descending shared-point count
+                              instead of consecutive index proximity.
 
         Returns
         -------
@@ -104,12 +108,39 @@ class MVSDensifier:
         scene_scale = float(np.median(spread)) if len(spread) > 1 else 1.0
         min_base  = self.min_baseline_fraction * scene_scale
 
+        # Build per-image neighbour lists
+        if covisibility_counts:
+            # Covisibility-based: for each image, sort candidates by shared 3-D point count
+            cam_set = set(cam_list)
+            neighbours_map: Dict[int, list] = {}
+            for i in cam_list:
+                candidates = []
+                for (a, b), count in covisibility_counts.items():
+                    if a == i and b in cam_set:
+                        candidates.append((b, count))
+                    elif b == i and a in cam_set:
+                        candidates.append((a, count))
+                candidates.sort(key=lambda x: x[1], reverse=True)
+                neighbours_map[i] = [c for c, _ in candidates[: self.max_pairs_per_image]]
+            logger.info(
+                "[MVS] Pair selection: covisibility-based "
+                f"(top-{self.max_pairs_per_image} per image)"
+            )
+        else:
+            # Fallback: consecutive sorted index (original behaviour)
+            neighbours_map = {}
+            for r, i in enumerate(cam_list):
+                neighbours_map[i] = cam_list[r + 1 : r + 1 + self.max_pairs_per_image]
+            logger.warning(
+                "[MVS] No covisibility data — using consecutive-index pair selection. "
+                "Pass covisibility_counts from IncrementalSfM for better results."
+            )
+
         all_pts, all_colors = [], []
         n_pairs_used = 0
 
-        for r, i in enumerate(cam_list):
-            neighbours = cam_list[r + 1 : r + 1 + self.max_pairs_per_image]
-            for j in neighbours:
+        for i in cam_list:
+            for j in neighbours_map[i]:
                 Ri = cameras[i]["R"]
                 ti = cameras[i]["t"].flatten()
                 Rj = cameras[j]["R"]
@@ -140,7 +171,12 @@ class MVSDensifier:
                     all_pts.append(pts)
                     all_colors.append(colors)
                     n_pairs_used += 1
-                    logger.info(f"MVS: pair ({i},{j}) → {len(pts):,} dense points")
+                    cov_str = ""
+                    if covisibility_counts:
+                        key = (min(i, j), max(i, j))
+                        cnt = covisibility_counts.get(key, 0)
+                        cov_str = f"  [{cnt} shared pts]"
+                    logger.info(f"MVS: pair ({i},{j}){cov_str} → {len(pts):,} dense points")
 
         if not all_pts:
             logger.warning("MVS: no dense points generated.")

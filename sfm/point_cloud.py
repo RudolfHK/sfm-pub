@@ -15,6 +15,7 @@ Compatible with MeshLab, CloudCompare, and open3d.
 
 import logging
 import struct
+import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -143,6 +144,7 @@ class PointCloudExporter:
         color_count = np.zeros(n_pts, dtype=np.int32)
 
         image_cache: Dict[int, np.ndarray] = {}
+        t0 = time.time()
 
         for img_idx, (pt_idxs, xs, ys) in by_cam.items():
             cam = cameras[img_idx]
@@ -163,23 +165,29 @@ class PointCloudExporter:
             img = image_cache[img_idx]
 
             good_pts = pt_arr[good]
-            good_xs  = obs_2d[good, 0]
-            good_ys  = obs_2d[good, 1]
+            good_xs  = np.round(obs_2d[good, 0]).astype(np.int32)
+            good_ys  = np.round(obs_2d[good, 1]).astype(np.int32)
 
-            for k in range(len(good_pts)):
-                bgr = _sample_bilinear(img, good_xs[k], good_ys[k])
-                rgb = bgr[::-1].astype(np.float64)   # BGR → RGB
-                color_sum[good_pts[k]]   += rgb
-                color_count[good_pts[k]] += 1
+            h, w = img.shape[:2]
+            np.clip(good_xs, 0, w - 1, out=good_xs)
+            np.clip(good_ys, 0, h - 1, out=good_ys)
+
+            # Vectorised color lookup: sample all good points at once
+            bgr_batch = img[good_ys, good_xs]            # (M, 3) uint8 BGR
+            rgb_batch = bgr_batch[:, ::-1].astype(np.float64)   # → RGB float
+
+            np.add.at(color_sum,   good_pts, rgb_batch)
+            np.add.at(color_count, good_pts, 1)
 
         has_color = color_count > 0
         colors[has_color] = (
             color_sum[has_color] / color_count[has_color, np.newaxis]
         ).astype(np.uint8)
 
+        elapsed = time.time() - t0
         logger.info(
-            f"Colourised {n_pts} points "
-            f"({len(image_cache)} images sampled)"
+            f"Colourised {n_pts} points ({len(image_cache)} images sampled) "
+            f"in {elapsed:.2f}s ({n_pts / elapsed:.0f} pts/s)"
         )
         return colors
 
@@ -292,9 +300,9 @@ class PointCloudExporter:
             "ply\n"
             "format binary_little_endian 1.0\n"
             f"element vertex {n_pts}\n"
-            "property float x\n"
-            "property float y\n"
-            "property float z\n"
+            "property double x\n"
+            "property double y\n"
+            "property double z\n"
             "property uchar red\n"
             "property uchar green\n"
             "property uchar blue\n"
@@ -302,13 +310,13 @@ class PointCloudExporter:
         )
 
         dtype = np.dtype([
-            ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+            ("x", "<f8"), ("y", "<f8"), ("z", "<f8"),
             ("r", "u1"),  ("g", "u1"),  ("b", "u1"),
         ])
         data       = np.empty(n_pts, dtype=dtype)
-        data["x"]  = points_3d[:, 0].astype(np.float32)
-        data["y"]  = points_3d[:, 1].astype(np.float32)
-        data["z"]  = points_3d[:, 2].astype(np.float32)
+        data["x"]  = points_3d[:, 0]
+        data["y"]  = points_3d[:, 1]
+        data["z"]  = points_3d[:, 2]
         data["r"]  = colors[:, 0]
         data["g"]  = colors[:, 1]
         data["b"]  = colors[:, 2]

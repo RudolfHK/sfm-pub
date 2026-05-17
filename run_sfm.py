@@ -69,10 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--sift-contrast-threshold",
         type=float,
-        default=0.04,
+        default=0.02,
         help=(
-            "SIFT contrast threshold. Lower values detect more low-contrast keypoints "
-            "(often more features, but noisier)."
+            "SIFT contrast threshold. Lower values detect more low-contrast keypoints. "
+            "0.02 recovers 30-60%% more features than OpenCV's default 0.04 on "
+            "high-resolution images; COLMAP uses 0.02 by default."
         ),
     )
     p.add_argument(
@@ -120,8 +121,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--vocab_words",
         type=int,
-        default=256,
-        help="Vocabulary size for vocab_tree matching.",
+        default=4096,
+        help=(
+            "Vocabulary size for vocab_tree matching. "
+            "Larger = better image retrieval quality but more memory and build time. "
+            "4096 is the practical minimum for small-to-medium datasets; "
+            "256 (old default) is too coarse for meaningful retrieval."
+        ),
     )
     p.add_argument(
         "--vocab_top_k",
@@ -174,6 +180,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Disable joint focal-length and radial-distortion (k1, k2) "
             "refinement in bundle adjustment.  Use when the camera is "
             "pre-calibrated or for speed."
+        ),
+    )
+    p.add_argument(
+        "--ba-fix-principal-point",
+        action="store_true",
+        help=(
+            "Keep cx/cy fixed during bundle adjustment (default: optimize cx/cy). "
+            "Use on small datasets or when BA convergence is poor."
         ),
     )
     # MVS densification
@@ -384,10 +398,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target face count after decimation (default: 100 000).",
     )
     msh.add_argument(
+        "--mesh-no-fill-holes",
+        action="store_false",
+        dest="mesh_fill_holes",
+        default=True,
+        help="Disable hole filling in the mesh surface (hole filling is ON by default).",
+    )
+    msh.add_argument(
         "--mesh-fill-holes",
         action="store_true",
-        default=True,
-        help="Attempt to fill holes in the mesh surface (default: enabled).",
+        dest="mesh_fill_holes_legacy",
+        default=False,
+        help=argparse.SUPPRESS,
     )
     msh.add_argument(
         "--mesh-keep-pointcloud",
@@ -604,6 +626,12 @@ def main(argv=None) -> int:
 
     setup_logging(args.verbose)
 
+    if getattr(args, "mesh_fill_holes_legacy", False):
+        logger.warning(
+            "[DEPRECATED] --mesh-fill-holes is deprecated and has inverted logic. "
+            "Hole filling is ON by default. Use --mesh-no-fill-holes to disable it."
+        )
+
     # ── Input validation (fast checks before any heavy imports) ──────────
     err = _validate_inputs(args)
     if err is not None:
@@ -652,7 +680,7 @@ def main(argv=None) -> int:
     from sfm.geometric_verification import GeometricVerifier
     from sfm.reconstruction import IncrementalSfM
     from sfm.point_cloud import PointCloudExporter
-    from sfm.utils import list_images, load_image, estimate_intrinsics
+    from sfm.utils import list_images, load_image, estimate_intrinsics, check_scene_graph_connectivity
     import numpy as np
 
     # ── Visualizer (zero cost when --visualize is not set) ────────────────
@@ -808,6 +836,43 @@ def main(argv=None) -> int:
         logger.error("No pairs passed geometric verification — aborting.")
         return 1
 
+    # ── Scene graph connectivity check ────────────────────────────────────
+    all_img_indices = list(features.keys())
+    components = check_scene_graph_connectivity(
+        verified, all_img_indices, min_inliers=args.min_inliers
+    )
+    if len(components) > 1:
+        logger.warning(
+            "[SCENE GRAPH] %d disconnected components found:", len(components)
+        )
+        for ci, comp in enumerate(components):
+            comp_names = [
+                features[idx]["image_path"].name
+                for idx in sorted(comp)
+                if idx in features
+            ]
+            logger.warning(
+                "  Component %d: %d images%s",
+                ci + 1,
+                len(comp),
+                "  → " + ", ".join(comp_names) if len(comp) <= 10 else "",
+            )
+        logger.warning(
+            "[SCENE GRAPH] Only the largest component (%d images) will be reconstructed. "
+            "Ensure images have sufficient overlap.",
+            len(components[0]),
+        )
+        # Filter verified pairs to the largest component only
+        largest_set = components[0]
+        verified = {
+            k: v for k, v in verified.items()
+            if k[0] in largest_set and k[1] in largest_set
+        }
+    else:
+        logger.info(
+            "[SCENE GRAPH] Fully connected: %d images in 1 component", len(all_img_indices)
+        )
+
     # ─────────────────────────────────────────────────────────────────────
     # Stage 5 — Incremental SfM reconstruction
     # ─────────────────────────────────────────────────────────────────────
@@ -822,6 +887,7 @@ def main(argv=None) -> int:
         ba_interval=args.ba_interval,
         dist_coeffs=dist_coeffs,
         refine_intrinsics=refine_intrinsics,
+        fix_principal_point=getattr(args, "ba_fix_principal_point", False),
         visualizer=viz,
     )
     try:
@@ -892,6 +958,19 @@ def main(argv=None) -> int:
         logger.info("\n[6b]   MVS densification (StereoSGBM)…")
         t = time.time()
 
+        # Build covisibility counts from observations: for each pair (i,j) of cameras
+        # count the number of 3-D points observed by both.
+        _pt_obs: dict = {}
+        for _img_idx, _pt_idx, _, _ in observations:
+            _pt_obs.setdefault(_pt_idx, set()).add(_img_idx)
+        _covis_counts: dict = {}
+        for _obs_set in _pt_obs.values():
+            _obs_list = sorted(_obs_set)
+            for _a in range(len(_obs_list)):
+                for _b in range(_a + 1, len(_obs_list)):
+                    _key = (_obs_list[_a], _obs_list[_b])
+                    _covis_counts[_key] = _covis_counts.get(_key, 0) + 1
+
         image_paths_map = {idx: features[idx]["image_path"] for idx in features}
         densifier = MVSDensifier()
         dense_pts, dense_colors = densifier.densify(
@@ -900,6 +979,7 @@ def main(argv=None) -> int:
             dist_coeffs=dist_coeffs,
             image_paths=image_paths_map,
             max_reproj_error=args.max_reproj_error,
+            covisibility_counts=_covis_counts,
         )
 
         if len(dense_pts) > 0:

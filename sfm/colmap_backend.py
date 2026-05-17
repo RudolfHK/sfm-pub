@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .device import has_gpu as _has_gpu
 from .point_cloud import PointCloudExporter
 
 logger = logging.getLogger(__name__)
@@ -87,63 +88,7 @@ def _read_cameras_bin(path: Path) -> Dict[int, dict]:
 
 def _read_images_bin(path: Path) -> Dict[int, dict]:
     """
-    Parse images.bin.
-
-    Returns
-    -------
-    {image_id: {
-        "qvec":        np.ndarray (4,)   # qw, qx, qy, qz
-        "tvec":        np.ndarray (3,)
-        "camera_id":   int
-        "name":        str               # filename relative to --image_path
-        "xys":         np.ndarray (M, 2) # 2-D observations
-        "point3D_ids": np.ndarray (M,)   # -1 when unobserved
-    }}
-    """
-    images: Dict[int, dict] = {}
-    with open(path, "rb") as f:
-        num_images = struct.unpack("<Q", f.read(8))[0]
-        for _ in range(num_images):
-            image_id  = struct.unpack("<I",  f.read(4))[0]
-            qvec      = np.frombuffer(f.read(32), dtype="<f8")   # (4,)
-            tvec      = np.frombuffer(f.read(24), dtype="<f8")   # (3,)
-            camera_id = struct.unpack("<I",  f.read(4))[0]
-
-            # Null-terminated filename
-            chars: List[bytes] = []
-            while True:
-                c = f.read(1)
-                if c == b"\x00":
-                    break
-                chars.append(c)
-            name = b"".join(chars).decode("utf-8")
-
-            num_pts2d   = struct.unpack("<Q", f.read(8))[0]
-            xys_flat    = np.frombuffer(f.read(16 * num_pts2d), dtype="<f8")
-            p3d_ids_raw = np.frombuffer(f.read(8  * num_pts2d), dtype="<i8")
-
-            # xys_flat layout: x0 y0 x1 y1 ...  interleaved with p3d_ids
-            # COLMAP binary: for each pt2D → float64 x, float64 y, int64 id
-            # The above two reads are WRONG for interleaved layout;
-            # read them sequentially instead:
-            xys         = np.zeros((num_pts2d, 2), dtype=np.float64)
-            point3d_ids = np.full(num_pts2d, -1,   dtype=np.int64)
-
-            images[image_id] = {
-                "qvec":        qvec.copy(),
-                "tvec":        tvec.copy(),
-                "camera_id":   camera_id,
-                "name":        name,
-                "xys":         xys,
-                "point3D_ids": point3d_ids,
-            }
-    return images
-
-
-def _read_images_bin_correct(path: Path) -> Dict[int, dict]:
-    """
     Parse images.bin with correct interleaved (x, y, point3D_id) layout.
-    Replaces _read_images_bin for correctness.
     """
     images: Dict[int, dict] = {}
     with open(path, "rb") as f:
@@ -263,7 +208,7 @@ def colmap_model_to_cameras(model_dir: Path) -> Dict[int, dict]:
     Indexed 0 … N-1 in ascending image-name order.
     """
     colmap_cams = _read_cameras_bin(model_dir / "cameras.bin")
-    colmap_imgs = _read_images_bin_correct(model_dir / "images.bin")
+    colmap_imgs = _read_images_bin(model_dir / "images.bin")
 
     cameras: Dict[int, dict] = {}
     for out_idx, (_iid, img) in enumerate(
@@ -562,11 +507,3 @@ class ColmapRunner:
             logger.warning("[COLMAP] Could not remove workspace: %s", exc)
 
 
-# ─── Module-level helpers ──────────────────────────────────────────────────────
-
-def _has_gpu() -> bool:
-    try:
-        import torch
-        return torch.cuda.is_available()
-    except ImportError:
-        return False

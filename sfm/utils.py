@@ -162,3 +162,48 @@ def reprojection_error(
 def camera_center(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """World-space camera centre  C = -R^T t."""
     return (-R.T @ t.reshape(3)).flatten()
+
+
+def check_scene_graph_connectivity(
+    verified_pairs: dict,
+    all_image_indices: list,
+    min_inliers: int = 1,
+) -> list:
+    """
+    Find connected components in the scene graph using union-find.
+
+    Parameters
+    ----------
+    verified_pairs     : {(i, j): {'n_inliers': int, ...}} from geometric verification
+    all_image_indices  : all image indices (nodes), including isolated ones
+    min_inliers        : minimum inlier count for an edge to count as connected
+
+    Returns
+    -------
+    components : list of sets, each set is one connected component of image indices,
+                 sorted largest component first
+    """
+    parent = {idx: idx for idx in all_image_indices}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[rx] = ry
+
+    for (i, j), data in verified_pairs.items():
+        if data.get("n_inliers", 0) >= min_inliers:
+            if i in parent and j in parent:
+                union(i, j)
+
+    groups: dict = {}
+    for idx in all_image_indices:
+        root = find(idx)
+        groups.setdefault(root, set()).add(idx)
+
+    return sorted(groups.values(), key=len, reverse=True)

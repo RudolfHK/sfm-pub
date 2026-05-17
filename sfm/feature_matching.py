@@ -355,7 +355,7 @@ class VocabTreeMatcher:
 
     def __init__(
         self,
-        n_words: int = 256,
+        n_words: int = 4096,
         top_k: int = 10,
         ratio_threshold: float = 0.75,
         cross_check: bool = True,
