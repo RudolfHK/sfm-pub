@@ -1,3 +1,5 @@
+[TOC]
+
 # sfm-pub
 
 Incremental Structure from Motion in Python. Give it a folder of photos; get a

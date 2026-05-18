@@ -1,3 +1,5 @@
+[TOC]
+
 # Visualization Guide
 
 This guide explains every figure the SfM visualization suite produces, what

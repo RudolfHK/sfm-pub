@@ -1,3 +1,5 @@
+[TOC]
+
 # Pipeline Guide
 
 Structure from Motion pipeline — conceptual reference and full CLI documentation.

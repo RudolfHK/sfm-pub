@@ -1,3 +1,5 @@
+[TOC]
+
 # Image Input Guide
 
 A practical guide to capturing photographs that produce good Structure from Motion reconstructions.

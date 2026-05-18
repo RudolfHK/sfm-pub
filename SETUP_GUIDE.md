@@ -1,3 +1,5 @@
+[TOC]
+
 # Setup Guide
 
 Installation and environment configuration for the SfM pipeline.
