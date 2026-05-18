@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sfm-pub"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Incremental Structure from Motion pipeline — sparse reconstruction, optional dense MVS and mesh"
+license = {text = "MIT"}
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "opencv-python>=4.8",
+    "Pillow>=9.0",
+]
+
+[project.optional-dependencies]
+# GPU-accelerated feature extraction and matching (CUDA hardware required)
+gpu = [
+    "torch>=2.0",
+    "kornia>=0.7",
+    "cupy-cuda12x>=12.0",
+]
+# COLMAP backend: no Python packages — install the COLMAP binary separately.
+# See SETUP_GUIDE.md for installation instructions.
+colmap = []
+# Visualization suite (--visualize flag)
+viz = [
+    "matplotlib>=3.5",
+    "networkx>=2.8",
+    "imageio>=2.22",
+]
+# Mesh reconstruction from sparse/dense point clouds (--mesh flag)
+mesh = [
+    "open3d>=0.17",
+]
+# Development and testing
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+    "black>=24.0",
+]
+# Everything except dev
+all = [
+    "sfm-pub[gpu,viz,mesh]",
+]
+
+[project.scripts]
+sfm = "run_sfm:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sfm*"]
+
+[tool.setuptools]
+py-modules = ["run_sfm"]
+
+# ── Ruff (linting + import sorting) ──────────────────────────────────────────
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",   # line too long — handled by black
+    "F841",   # local variable assigned but never used (common in research code)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sfm"]
+
+# ── Black (formatting) ────────────────────────────────────────────────────────
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+# ── pytest ────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "integration_test.py"]
+addopts = "-v --tb=short"

@@ -1,134 +1,91 @@
-# sfm-pub — Pure-Python Structure from Motion
+# sfm-pub
 
-A complete, incremental SfM pipeline that reconstructs a coloured 3-D point
-cloud from an unordered directory of images.  No COLMAP, no OpenSfM — every
-stage is implemented from scratch in Python with NumPy / SciPy / OpenCV.
+Incremental Structure from Motion in Python. Give it a folder of photos; get a
+colored 3D point cloud (`.ply`) back. Optional dense reconstruction, surface mesh,
+and a full visualization suite.
 
 ---
 
-## Quick start
+## Quick Start
 
 ```bash
-pip install -r requirements.txt
-python run_sfm.py --image_dir ./images --output output.ply
+git clone https://github.com/rudolfhk/sfm-pub.git
+cd sfm-pub
+python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -e .
+
+sfm --image_dir ./images --output output.ply
 ```
 
-Open `output.ply` in **MeshLab** or **CloudCompare** to view the result.
+## Guides
 
----
+| Document | Contents |
+|----------|----------|
+| [SETUP_GUIDE.md](SETUP_GUIDE.md) | Installation on Windows and Linux, optional extras, COLMAP setup, GPU setup, troubleshooting |
+| [IMAGE_INPUT_GUIDE.md](IMAGE_INPUT_GUIDE.md) | Capture guidelines — overlap, lighting, focus, shooting strategies by subject type |
+| [PIPELINE_GUIDE.md](PIPELINE_GUIDE.md) | How the pipeline works, full CLI reference, usage examples, tuning tips |
+| [VISUALIZATION_GUIDE.md](VISUALIZATION_GUIDE.md) | Reading the diagnostic figures, interpreting reprojection error, green/red flag guide |
 
-## Pipeline stages
+## Install Options
 
-| Stage | Module | Description |
-|-------|--------|-------------|
-| 1 | `feature_extraction.py` | SIFT keypoint + descriptor extraction (CPU or GPU) |
-| 2 | `feature_matching.py`   | Exhaustive pairwise matching — Lowe's ratio test + cross-check |
-| 3 | `geometric_verification.py` | Fundamental / Essential matrix RANSAC → (R, t) per pair |
-| 4 | `reconstruction.py`     | Incremental SfM — seed, PnP registration, triangulation |
-| 4b| `bundle_adjustment.py`  | Sparse LM bundle adjustment via `scipy.optimize.least_squares` |
-| 5 | `point_cloud.py`        | Outlier filtering, bilinear colour sampling, binary PLY export |
+| Extra | Installs | Enables |
+|-------|---------|---------|
+| *(none)* | numpy, scipy, opencv, Pillow | Core pipeline |
+| `gpu` | torch, kornia, cupy-cuda12x | CUDA feature detection and matching |
+| `viz` | matplotlib, networkx, imageio | `--visualize` flag, diagnostic figures |
+| `mesh` | open3d | `--mesh` flag, Poisson/BPA surface reconstruction |
+| `all` | gpu + viz + mesh | Everything |
 
----
-
-## CLI reference
-
-```
-python run_sfm.py --help
-
-  --image_dir PATH       Input image directory (JPG / PNG)   [required]
-  --output PATH          Output .ply file                    [output.ply]
-  --n_features INT       SIFT features per image             [8000]
-  --ratio FLOAT          Lowe's ratio threshold              [0.75]
-  --min_matches INT      Min raw matches to keep a pair      [15]
-  --min_inliers INT      Min RANSAC inliers to accept a pair [15]
-  --ransac_thr FLOAT     RANSAC pixel threshold              [1.0]
-  --max_reproj_error F   Max reprojection error (px)         [4.0]
-  --ba_interval INT      BA every N new cameras              [5]
-  --no_filter            Skip point-cloud outlier filter
-  --verbose              DEBUG-level logging
+```bash
+pip install -e ".[gpu,viz,mesh]"   # install specific extras
+pip install -e ".[all]"            # install all extras
 ```
 
----
+## Basic Usage
 
-## Project layout
+```bash
+# Minimal
+sfm --image_dir ./photos --output model.ply
 
-```
-sfm_project/
-├── run_sfm.py                 CLI entry point
-├── requirements.txt
-├── README.md
-└── sfm/
-    ├── __init__.py
-    ├── utils.py               Shared helpers (logging, I/O, camera maths)
-    ├── feature_extraction.py  SIFT extraction (CPU + optional GPU)
-    ├── feature_matching.py    Pairwise FLANN matching + ratio/cross-check
-    ├── geometric_verification.py  F → E → (R,t) RANSAC
-    ├── reconstruction.py      Incremental SfM core
-    ├── bundle_adjustment.py   Sparse BA via scipy LM
-    └── point_cloud.py         Colourisation + binary PLY export
-```
+# With visualization (saves diagnostic figures to sfm_visualization/)
+sfm --image_dir ./photos --output model.ply --visualize
 
----
+# Dense reconstruction (StereoSGBM)
+sfm --image_dir ./photos --output model.ply --dense
 
-## Mathematics
+# COLMAP sparse reconstruction
+sfm --image_dir ./photos --output model.ply --backend colmap
 
-### Camera model
+# Full pipeline: dense + mesh + visualization
+sfm --image_dir ./photos --output model.ply \
+    --dense --mesh --mesh-method poisson --visualize
 
-```
-x = K [R | t] X
+# Large dataset (sequential matching + checkpointing)
+sfm --image_dir ./photos --output model.ply \
+    --match_strategy sequential --checkpoint-dir ./ckpt --resume
 ```
 
-* **K** — 3×3 intrinsic matrix, estimated from image dimensions:
-  `f = max(W, H)`,  `cx = W/2`,  `cy = H/2`
-* **R, t** — extrinsic rotation and translation
+Run `sfm --help` for all options, or see [PIPELINE_GUIDE.md](PIPELINE_GUIDE.md).
 
-### Essential matrix
+## Pipeline Stages
 
 ```
-E = K'^T F K
+images/ → Feature extraction (SIFT) → Pairwise matching (FLANN)
+       → Geometric verification (USAC_MAGSAC) → Incremental SfM
+       → Bundle adjustment (scipy TRF, Huber) → Sparse PLY
+       → [optional] MVS densification (StereoSGBM) → Dense PLY
+       → [optional] Mesh reconstruction (Screened Poisson) → OBJ/PLY
 ```
 
-Decomposed via SVD into four (R, t) candidates; the cheirality constraint
-(points in front of both cameras) selects the unique valid solution.
+## Requirements
 
-### Triangulation
+- Python 3.10+
+- COLMAP binary (only for `--backend colmap / colmap-mvs`)
+- NVIDIA GPU + CUDA 12.x (only for `pip install -e ".[gpu]"`)
 
-Linear DLT via `cv2.triangulatePoints`.  Each new point is validated by:
-1. Positive depth in both cameras
-2. Bearing angle ≥ 1°
-3. Reprojection error < threshold
+## Testing
 
-### Bundle adjustment
-
-Minimises the robust cost
-
+```bash
+python integration_test.py
+# Expected: === INTEGRATION TEST PASSED ===
 ```
-∑_{i,j}  ρ( ||π(K, R_j, t_j, X_i) − x_{ij}||² )
-```
-
-where ρ is the Huber loss.  Camera poses are parameterised as Rodrigues
-axis-angle (6 DOF each) so the Jacobian sparsity can be fully exploited by
-`scipy.optimize.least_squares(method='trf', jac_sparsity=…)`.
-
----
-
-## GPU acceleration
-
-Set `use_cuda=True` in `FeatureExtractor` (or let it auto-detect).  It tries
-in order:
-
-1. **kornia** — GPU keypoint detection (requires PyTorch + kornia)
-2. **OpenCV CUDA SURF** — requires `opencv-contrib-python` built with CUDA
-
-If neither is available the pipeline silently falls back to CPU SIFT.
-
----
-
-## Tips
-
-* **Too few points?** Lower `--ratio` (e.g. 0.70) and `--min_inliers` (e.g. 10).
-* **Noisy cloud?** Raise `--ransac_thr` to 2.0 or lower `--max_reproj_error`.
-* **Slow on large sets?** Reduce `--n_features` or add an image-retrieval
-  pre-filter before matching.
-* **Intrinsics known?** Modify `estimate_intrinsics()` in `utils.py` to return
-  your calibrated K directly.
