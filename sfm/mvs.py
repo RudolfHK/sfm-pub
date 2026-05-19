@@ -55,12 +55,16 @@ class MVSDensifier:
         block_size: int = 5,
         max_pairs_per_image: int = 2,
         max_dense_pts: int = 500_000,
+        mvs_fusion: bool = False,
+        fusion_min_views: int = 2,
     ) -> None:
         self.min_baseline_fraction = min_baseline_fraction
         self.num_disparities       = (num_disparities // 16) * 16  # ensure multiple of 16
         self.block_size            = block_size
         self.max_pairs_per_image   = max_pairs_per_image
         self.max_dense_pts         = max_dense_pts
+        self.mvs_fusion            = mvs_fusion
+        self.fusion_min_views      = fusion_min_views
 
     # ── public API ────────────────────────────────────────────────────────
 
@@ -199,6 +203,11 @@ class MVSDensifier:
         pts_merged    = np.vstack(all_pts)
         colors_merged = np.vstack(all_colors)
 
+        if self.mvs_fusion and len(cameras) >= self.fusion_min_views:
+            pts_merged, colors_merged = self._depth_consistency_filter(
+                pts_merged, colors_merged, cameras, K,
+            )
+
         if len(pts_merged) > self.max_dense_pts:
             rng = np.random.default_rng(0)
             sel = rng.choice(len(pts_merged), self.max_dense_pts, replace=False)
@@ -210,6 +219,59 @@ class MVSDensifier:
             f"{len(pts_merged):,} dense points total"
         )
         return pts_merged, colors_merged
+
+    def _depth_consistency_filter(
+        self,
+        pts: np.ndarray,
+        colors: np.ndarray,
+        cameras: dict,
+        K: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Remove world-space points not seen from at least ``fusion_min_views``
+        registered cameras with positive depth.
+
+        For each candidate point, project into every camera.  Count cameras
+        where depth > 0.  Keep points that meet the minimum-views threshold.
+        This discards floating points from degenerate stereo pairs (featureless
+        surfaces, reflections) that are geometrically inconsistent with the
+        rest of the reconstruction.
+
+        Activated by ``--mvs-fusion``.
+        """
+        n = len(pts)
+        if n == 0:
+            return pts, colors
+
+        cam_list = sorted(cameras.keys())
+        n_cams   = len(cam_list)
+        n_req    = min(self.fusion_min_views, n_cams)
+
+        # Batch: project all N points into all C cameras at once
+        # Stack R and t into arrays: (C, 3, 3) and (C, 3)
+        R_stack = np.stack([cameras[c]["R"] for c in cam_list], axis=0)  # (C, 3, 3)
+        t_stack = np.stack([cameras[c]["t"].flatten() for c in cam_list], axis=0)  # (C, 3)
+
+        # X_cam[c, n] = R_stack[c] @ pts[n].T + t_stack[c]
+        # Shape: (C, 3, N)
+        X_cam = (R_stack @ pts.T[None]) + t_stack[:, :, None]  # (C, 3, N)
+
+        # Depth is the Z component
+        depths = X_cam[:, 2, :]   # (C, N)
+
+        # Count cameras with positive depth per point
+        views_per_pt = (depths > 0.01).sum(axis=0)   # (N,)
+
+        keep = views_per_pt >= n_req
+        n_removed = int((~keep).sum())
+
+        if n_removed > 0:
+            logger.info(
+                f"[MVS fusion] Removed {n_removed}/{n} points "
+                f"with < {n_req} positive-depth views"
+            )
+
+        return pts[keep].astype(np.float64), colors[keep]
 
     # ── internals ─────────────────────────────────────────────────────────
 

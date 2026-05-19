@@ -800,3 +800,137 @@ class DINOv2Matcher:
                 gi, gj = indices[r], indices[int(c)]
                 pairs.add((min(gi, gj), max(gi, gj)))
         return sorted(pairs)
+
+
+# ─── LightGlue matcher (SuperPoint + LightGlue) ───────────────────────────────
+
+class LightGlueMatcher:
+    """
+    Pairwise matcher using kornia's LightGlue attention network.
+
+    LightGlue replaces the ratio-test FLANN/GPU path when SuperPoint
+    features are used.  It takes per-image (keypoints, descriptors) pairs
+    and returns direct confident matches with learned score filtering.
+
+    Requires ``kornia>=0.7`` and ``torch``.
+
+    Activated when ``--feature-backend superpoint`` is combined with
+    ``--match-strategy`` in run_sfm.py (LightGlueMatcher is selected
+    automatically by run_sfm when the feature backend is superpoint).
+
+    Parameters
+    ----------
+    min_matches  : Minimum matches to retain a pair.
+    depth        : LightGlue Transformer depth (default 9 for full model).
+    """
+
+    def __init__(
+        self,
+        min_matches: int = 15,
+        depth: int = 9,
+        candidate_pairs: Optional[List[Tuple[int, int]]] = None,
+    ) -> None:
+        self.min_matches      = min_matches
+        self.depth            = depth
+        self.candidate_pairs  = candidate_pairs   # None = exhaustive
+        self._matcher         = None   # lazy-loaded
+
+    def _load_matcher(self):
+        if self._matcher is not None:
+            return self._matcher
+        try:
+            import torch
+            import kornia.feature as KF
+
+            device = get_device()
+            lg = KF.LightGlue("superpoint").eval()
+            if device is not None:
+                lg = lg.to(device)
+            self._matcher = lg
+            logger.info(f"LightGlue loaded on {device if device else 'cpu'}")
+            return lg
+        except Exception as exc:
+            raise RuntimeError(
+                f"LightGlue could not be initialised: {exc}.  "
+                "Install kornia>=0.7 and torch."
+            ) from exc
+
+    def match_all(self, features: dict) -> MatchDict:
+        """
+        Match all candidate pairs using LightGlue.
+
+        If ``candidate_pairs`` was set at construction, only those pairs are
+        matched (O(k·N)); otherwise exhaustive O(N²) matching is used.
+        """
+        indices = sorted(features.keys())
+        if self.candidate_pairs is not None:
+            pairs = self.candidate_pairs
+        else:
+            pairs = list(combinations(indices, 2))
+
+        n_pairs = len(pairs)
+        logger.info(
+            f"LightGlue matching: {n_pairs} pairs "
+            f"(min_matches={self.min_matches})…"
+        )
+
+        lg      = self._load_matcher()
+        matches: MatchDict = {}
+
+        for k, (i, j) in enumerate(pairs):
+            m = self._match_pair_lg(lg, features[i], features[j])
+            if len(m) >= self.min_matches:
+                matches[(i, j)] = m
+            if (k + 1) % max(1, n_pairs // 10) == 0:
+                logger.info(f"  … {k+1}/{n_pairs} pairs done")
+
+        logger.info(
+            f"LightGlue done: {len(matches)}/{n_pairs} pairs retained"
+        )
+        return matches
+
+    def _match_pair_lg(
+        self, lg, feat_i: dict, feat_j: dict
+    ) -> np.ndarray:
+        """Run LightGlue on one pair; return (M, 2) int32 match array."""
+        import torch
+
+        device = get_device()
+
+        kps_i   = feat_i["keypoints"].astype(np.float32)   # (N, 2)
+        descs_i = feat_i["descriptors"].astype(np.float32) # (N, 256)
+        kps_j   = feat_j["keypoints"].astype(np.float32)
+        descs_j = feat_j["descriptors"].astype(np.float32)
+
+        if len(kps_i) < 4 or len(kps_j) < 4:
+            return np.zeros((0, 2), dtype=np.int32)
+
+        def to_tensor(arr):
+            t = torch.from_numpy(arr).unsqueeze(0)   # (1, N, D)
+            return t.to(device) if device else t
+
+        try:
+            with torch.no_grad():
+                out = lg({
+                    "image0": {
+                        "keypoints": to_tensor(kps_i),
+                        "descriptors": to_tensor(descs_i),
+                    },
+                    "image1": {
+                        "keypoints": to_tensor(kps_j),
+                        "descriptors": to_tensor(descs_j),
+                    },
+                })
+        except Exception as exc:
+            logger.debug(f"LightGlue pair failed ({exc})")
+            return np.zeros((0, 2), dtype=np.int32)
+
+        # out["matches0"][0]: (N_i,) — for each kp in image0, matched kp idx in image1 or -1
+        matches0 = out["matches0"][0].cpu().numpy()   # (N_i,)
+        valid    = matches0 >= 0
+        if not valid.any():
+            return np.zeros((0, 2), dtype=np.int32)
+
+        qi = np.where(valid)[0].astype(np.int32)
+        ti = matches0[valid].astype(np.int32)
+        return np.stack([qi, ti], axis=1)   # (M, 2)

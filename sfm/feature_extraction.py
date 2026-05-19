@@ -258,3 +258,120 @@ class FeatureExtractor:
             self._sift = cv2.SIFT_create(**self._sift_kwargs())
             self._backend = "cpu_sift"
             return self._extract_sift_cpu(gray)
+
+
+# ─── SuperPoint extractor ─────────────────────────────────────────────────────
+
+class SuperPointExtractor:
+    """
+    Feature extractor using SuperPoint (kornia.feature.SuperPointDescriptor).
+
+    Produces (N, 2) float32 keypoints and (N, 256) float32 descriptors.
+    Requires ``torch`` and ``kornia>=0.7`` (included in the ``gpu`` extra).
+
+    Activated by ``--feature-backend superpoint`` in run_sfm.py.  Use with
+    ``LightGlueMatcher`` in feature_matching.py for best quality.
+
+    Parameters
+    ----------
+    n_features : Max keypoints to keep per image (score-sorted).
+    use_cuda   : Force GPU/CPU; None = auto-detect.
+    """
+
+    DESC_DIM = 256
+
+    def __init__(
+        self,
+        n_features: int = 8_000,
+        use_cuda: Optional[bool] = None,
+    ) -> None:
+        self.n_features = n_features
+        self.use_cuda   = _cuda_available() if use_cuda is None else use_cuda
+        self._model     = None   # lazy-loaded
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+        try:
+            import torch
+            import kornia.feature as KF
+
+            model = KF.SuperPoint(num_features=self.n_features).eval()
+            device = get_device()
+            if device is not None and self.use_cuda:
+                model = model.to(device)
+            self._model = model
+            logger.info(
+                f"SuperPoint loaded on {device if device else 'cpu'} "
+                f"(n_features={self.n_features})"
+            )
+            return model
+        except Exception as exc:
+            raise RuntimeError(
+                f"SuperPoint could not be initialised: {exc}.  "
+                "Install kornia>=0.7 and torch."
+            ) from exc
+
+    def extract(self, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Extract SuperPoint keypoints + 256-D descriptors from a BGR image."""
+        import torch
+
+        model  = self._load_model()
+        device = get_device() if self.use_cuda else None
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        t = (
+            torch.from_numpy(gray)
+            .float()
+            .div(255.0)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
+        if device is not None:
+            t = t.to(device)
+
+        try:
+            with torch.no_grad():
+                out = model(t)
+        except Exception as exc:
+            logger.warning(f"SuperPoint inference failed ({exc}), returning empty")
+            return (
+                np.zeros((0, 2), dtype=np.float32),
+                np.zeros((0, self.DESC_DIM), dtype=np.float32),
+            )
+
+        # kornia SuperPoint output: dict with 'keypoints', 'scores', 'descriptors'
+        kps_t   = out["keypoints"][0].cpu()       # (N, 2)  x, y in pixels
+        descs_t = out["descriptors"][0].cpu()     # (256, N) — needs transpose
+
+        if kps_t.shape[0] == 0:
+            return (
+                np.zeros((0, 2), dtype=np.float32),
+                np.zeros((0, self.DESC_DIM), dtype=np.float32),
+            )
+
+        kps   = kps_t.numpy().astype(np.float32)         # (N, 2)
+        descs = descs_t.T.numpy().astype(np.float32)     # (N, 256)
+        return kps, descs
+
+    def extract_all(self, image_paths: list) -> Dict[int, dict]:
+        """Same interface as FeatureExtractor.extract_all()."""
+        features: Dict[int, dict] = {}
+        n = len(image_paths)
+        for idx, path in enumerate(image_paths):
+            logger.info(f"  SuperPoint [{idx+1}/{n}]: {Path(path).name}")
+            img = load_image(str(path))
+            kps, descs = self.extract(img)
+            features[idx] = {
+                "keypoints":   kps,
+                "descriptors": descs,
+                "image_path":  Path(path),
+                "image_shape": img.shape,
+            }
+            logger.debug(f"    → {len(kps)} keypoints")
+
+        total = sum(len(f["keypoints"]) for f in features.values())
+        logger.info(
+            f"SuperPoint extraction complete — {total:,} keypoints across {n} images"
+        )
+        return features

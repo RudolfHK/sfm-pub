@@ -30,7 +30,8 @@ from typing import Dict, List, Optional, Set, Tuple
 import cv2
 import numpy as np
 
-from .bundle_adjustment import BundleAdjuster
+from .bundle_adjustment import BundleAdjuster, PyceresBundleAdjuster
+from .intrinsics import CameraIntrinsics
 from .utils import camera_center, projection_matrix, reprojection_error, undistort_points
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,8 @@ class IncrementalSfM:
         fix_principal_point: bool = False,
         visualizer=None,
         merge_tracks: bool = False,
+        per_camera_intrinsics: Optional[Dict[int, "CameraIntrinsics"]] = None,
+        ba_backend: str = "scipy",
     ) -> None:
         self.features            = features
         self.verified_pairs      = verified_pairs
@@ -198,6 +201,8 @@ class IncrementalSfM:
         self.merge_tracks        = merge_tracks
         self.viz                 = visualizer
         self._ba_step            = 0
+        # Per-camera intrinsics mode: each image may have its own K
+        self._per_cam_intr: Optional[Dict[int, CameraIntrinsics]] = per_camera_intrinsics
 
         if dist_coeffs is None:
             self.dist_coeffs = np.zeros(4, dtype=np.float64)
@@ -209,8 +214,10 @@ class IncrementalSfM:
         self._undist_kps: Dict[int, np.ndarray] = {}
         for img_idx, feat in features.items():
             kps = feat["keypoints"].astype(np.float64)
-            if np.any(self.dist_coeffs != 0):
-                self._undist_kps[img_idx] = undistort_points(kps, self.K, self.dist_coeffs)
+            K_i = self._get_K(img_idx)
+            d_i = self._get_dist(img_idx)
+            if np.any(d_i != 0):
+                self._undist_kps[img_idx] = undistort_points(kps, K_i, d_i)
             else:
                 self._undist_kps[img_idx] = kps
 
@@ -234,7 +241,10 @@ class IncrementalSfM:
             self._pairs_by_img[i].append(pair_key)
             self._pairs_by_img[j].append(pair_key)
 
-        self._ba              = BundleAdjuster(fix_principal_point=self.fix_principal_point)
+        if ba_backend == "pyceres":
+            self._ba = PyceresBundleAdjuster(fix_principal_point=self.fix_principal_point)
+        else:
+            self._ba = BundleAdjuster(fix_principal_point=self.fix_principal_point)
         self._cams_since_ba   = 0
 
     # ── public entry point ────────────────────────────────────────────────
@@ -355,8 +365,8 @@ class IncrementalSfM:
             R_i, t_i = np.eye(3), np.zeros((3, 1))
             C_i = camera_center(R_i, t_i)
             C_j = camera_center(R_j, t_j)
-            P_i = projection_matrix(self.K, R_i, t_i)
-            P_j = projection_matrix(self.K, R_j, t_j)
+            P_i = projection_matrix(self._get_K(i), R_i, t_i)
+            P_j = projection_matrix(self._get_K(j), R_j, t_j)
 
             matches = data["inlier_matches"]
             if len(matches) == 0:
@@ -414,12 +424,15 @@ class IncrementalSfM:
         R_j   = data["R"]
         t_j   = data["t"].reshape(3, 1)
 
-        R_i, t_i = np.eye(3), np.zeros((3, 1))
-        self.cameras[i] = {"R": R_i, "t": t_i, "K": self.K}
-        self.cameras[j] = {"R": R_j, "t": t_j, "K": self.K}
+        K_i = self._get_K(i)
+        K_j = self._get_K(j)
 
-        P_i = projection_matrix(self.K, R_i, t_i)
-        P_j = projection_matrix(self.K, R_j, t_j)
+        R_i, t_i = np.eye(3), np.zeros((3, 1))
+        self.cameras[i] = {"R": R_i, "t": t_i, "K": K_i}
+        self.cameras[j] = {"R": R_j, "t": t_j, "K": K_j}
+
+        P_i = projection_matrix(K_i, R_i, t_i)
+        P_j = projection_matrix(K_j, R_j, t_j)
         C_i = camera_center(R_i, t_i)
         C_j = camera_center(R_j, t_j)
 
@@ -448,7 +461,7 @@ class IncrementalSfM:
             X3d[vw_idx],
             R_i, t_i, R_j, t_j,
             pts1_ud[vw_idx], pts2_ud[vw_idx],
-            C_i, C_j, self.K, self.max_reproj_err,
+            C_i, C_j, K_i, self.max_reproj_err,
         )
 
         for k in np.where(accept)[0]:
@@ -505,11 +518,14 @@ class IncrementalSfM:
             logger.debug(f"  Insufficient correspondences: {len(pts2d_ud)}")
             return False
 
+        K_i  = self._get_K(img_idx)
+        d_i  = self._get_dist(img_idx)
+
         ok, rvec, tvec, inliers = cv2.solvePnPRansac(
             pts3d.reshape(-1, 1, 3),
             pts2d_ud.reshape(-1, 1, 2),
-            self.K,
-            self.dist_coeffs,
+            K_i,
+            d_i,
             confidence=0.999,
             reprojectionError=self.max_reproj_err,
             iterationsCount=1000,
@@ -525,8 +541,8 @@ class IncrementalSfM:
             rvec, tvec = cv2.solvePnPRefineLM(
                 inlier_pts3d.reshape(-1, 1, 3),
                 inlier_pts2d.reshape(-1, 1, 2),
-                self.K,
-                self.dist_coeffs,
+                K_i,
+                d_i,
                 rvec,
                 tvec,
                 criteria=(
@@ -552,7 +568,7 @@ class IncrementalSfM:
                 )
                 return False
 
-        self.cameras[img_idx] = {"R": R, "t": t, "K": self.K}
+        self.cameras[img_idx] = {"R": R, "t": t, "K": K_i}
 
         orig_kps = self.features[img_idx]["keypoints"]
         for ci in inliers.flatten():
@@ -621,7 +637,8 @@ class IncrementalSfM:
         """
         R_n = self.cameras[new_idx]["R"]
         t_n = self.cameras[new_idx]["t"]
-        P_n = projection_matrix(self.K, R_n, t_n)
+        K_n = self._get_K(new_idx)
+        P_n = projection_matrix(K_n, R_n, t_n)
         C_n = camera_center(R_n, t_n)
         kps_n_ud   = self._undist_kps[new_idx]
         kps_n_orig = self.features[new_idx]["keypoints"]
@@ -636,7 +653,8 @@ class IncrementalSfM:
 
             R_o  = self.cameras[other]["R"]
             t_o  = self.cameras[other]["t"]
-            P_o  = projection_matrix(self.K, R_o, t_o)
+            K_o  = self._get_K(other)
+            P_o  = projection_matrix(K_o, R_o, t_o)
             C_o  = camera_center(R_o, t_o)
             kps_o_ud   = self._undist_kps[other]
             kps_o_orig = self.features[other]["keypoints"]
@@ -687,7 +705,7 @@ class IncrementalSfM:
                 X3d[vw_idx],
                 R_n, t_n, R_o, t_o,
                 pts_n[vw_idx], pts_o[vw_idx],
-                C_n, C_o, self.K, self.max_reproj_err,
+                C_n, C_o, K_n, self.max_reproj_err,
             )
 
             for k in np.where(accept)[0]:
@@ -750,7 +768,7 @@ class IncrementalSfM:
             e = reprojection_error(
                 self.points_3d[pt_idx],
                 np.array([x, y]),
-                self.K, cam["R"], cam["t"],
+                self._get_K(img_idx), cam["R"], cam["t"],
             )
             if np.isfinite(e):
                 errors[pt_idx].append(e)
@@ -942,8 +960,9 @@ class IncrementalSfM:
 
             R_i = self.cameras[i]["R"];  t_i = self.cameras[i]["t"]
             R_j = self.cameras[j]["R"];  t_j = self.cameras[j]["t"]
-            P_i = projection_matrix(self.K, R_i, t_i)
-            P_j = projection_matrix(self.K, R_j, t_j)
+            K_i = self._get_K(i);  K_j = self._get_K(j)
+            P_i = projection_matrix(K_i, R_i, t_i)
+            P_j = projection_matrix(K_j, R_j, t_j)
             C_i = camera_center(R_i, t_i)
             C_j = camera_center(R_j, t_j)
 
@@ -977,7 +996,7 @@ class IncrementalSfM:
                 X3d[vw_idx],
                 R_i, t_i, R_j, t_j,
                 pts1_ud[vw_idx], pts2_ud[vw_idx],
-                C_i, C_j, self.K, self.max_reproj_err,
+                C_i, C_j, K_i, self.max_reproj_err,
             )
 
             for k in np.where(accept)[0]:
@@ -1015,16 +1034,28 @@ class IncrementalSfM:
         self._add_obs(img_idx, idx, pt2d)
         return idx
 
+    def _get_K(self, img_idx: int) -> np.ndarray:
+        """Return the (3,3) camera matrix for img_idx (per-cam or shared)."""
+        if self._per_cam_intr is not None and img_idx in self._per_cam_intr:
+            return self._per_cam_intr[img_idx].to_K()
+        return self.K
+
+    def _get_dist(self, img_idx: int) -> np.ndarray:
+        """Return distortion coefficients for img_idx (per-cam or shared)."""
+        if self._per_cam_intr is not None and img_idx in self._per_cam_intr:
+            return self._per_cam_intr[img_idx].to_dist()
+        return self.dist_coeffs
+
     def _quick_rmse(self, pts_arr: np.ndarray) -> float:
         """Fast vectorised reprojection RMSE over all current observations."""
         if not self.cameras or not self.observations:
             return 0.0
-        K  = self.K
-        f  = K[0, 0]; cx = K[0, 2]; cy = K[1, 2]
         sq: List[float] = []
         for img_idx, pt_idx, x, y in self.observations:
             if img_idx not in self.cameras or pt_idx >= len(pts_arr):
                 continue
+            K_i = self._get_K(img_idx)
+            f = K_i[0, 0]; cx = K_i[0, 2]; cy = K_i[1, 2]
             cam = self.cameras[img_idx]
             X_c = cam["R"] @ pts_arr[pt_idx] + cam["t"].flatten()
             if X_c[2] > 1e-6:

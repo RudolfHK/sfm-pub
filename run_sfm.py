@@ -64,7 +64,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--n_features",
         type=int,
         default=8_000,
-        help="Max SIFT features extracted per image. Examples typically have 2k-10k features per image; set higher for large scenes with lots of texture, lower for speed on small/simple scenes.",
+        help="Max features extracted per image (SIFT or SuperPoint).",
+    )
+    p.add_argument(
+        "--feature-backend",
+        choices=["sift", "superpoint"],
+        default="sift",
+        help=(
+            "Feature extraction backend.  'sift' (default) uses OpenCV SIFT with "
+            "optional GPU acceleration via kornia or CUDA SURF.  'superpoint' uses "
+            "kornia's SuperPoint neural detector+descriptor (requires torch + "
+            "kornia>=0.7); automatically activates LightGlue matching."
+        ),
     )
     p.add_argument(
         "--sift-contrast-threshold",
@@ -216,6 +227,27 @@ def build_parser() -> argparse.ArgumentParser:
             "participates in at most one 3-D track, reducing duplicate 3-D points."
         ),
     )
+    p.add_argument(
+        "--per-camera-intrinsics",
+        action="store_true",
+        help=(
+            "Give each camera its own fx, fy, cx, cy, k1, k2 initialised from "
+            "EXIF FocalLengthIn35mmFilm when available (falls back to shared "
+            "estimate).  Enables T2-01 per-camera intrinsics in reconstruction.  "
+            "Required for --ba-backend pyceres per-camera optimisation."
+        ),
+    )
+    p.add_argument(
+        "--ba-backend",
+        choices=["scipy", "pyceres"],
+        default="scipy",
+        help=(
+            "'scipy' (default) uses the TRF least-squares solver with a "
+            "manually constructed Jacobian sparsity pattern.  'pyceres' uses "
+            "pyceres (Ceres Solver Python bindings) with SPARSE_SCHUR for "
+            "O(C³+P) scaling; falls back to scipy if pyceres is not installed."
+        ),
+    )
     # MVS densification
     p.add_argument(
         "--dense",
@@ -232,6 +264,21 @@ def build_parser() -> argparse.ArgumentParser:
             "Output PLY path for the dense cloud.  "
             "Defaults to <output_stem>_dense.ply."
         ),
+    )
+    p.add_argument(
+        "--mvs-fusion",
+        action="store_true",
+        help=(
+            "Enable multi-view depth consistency filtering after SGBM densification.  "
+            "Each world-space point must be visible from at least --mvs-fusion-min-views "
+            "cameras (positive depth) to be kept.  Requires --dense."
+        ),
+    )
+    p.add_argument(
+        "--mvs-fusion-min-views",
+        type=int,
+        default=2,
+        help="Minimum cameras with positive depth for a point to survive --mvs-fusion.",
     )
     # Export
     p.add_argument(
@@ -701,8 +748,11 @@ def main(argv=None) -> int:
         return 0
 
     # ── Imports (deferred so --help is instant) ───────────────────────────
-    from sfm.feature_extraction import FeatureExtractor
-    from sfm.feature_matching import FeatureMatcher, SequentialMatcher, VocabTreeMatcher, DINOv2Matcher
+    from sfm.feature_extraction import FeatureExtractor, SuperPointExtractor
+    from sfm.feature_matching import (
+        FeatureMatcher, SequentialMatcher, VocabTreeMatcher, DINOv2Matcher,
+        LightGlueMatcher,
+    )
     from sfm.geometric_verification import GeometricVerifier
     from sfm.reconstruction import IncrementalSfM
     from sfm.point_cloud import PointCloudExporter
@@ -769,13 +819,17 @@ def main(argv=None) -> int:
         features = _load_checkpoint(ckpt_dir, "features", img_hash)
     if features is None:
         t = time.time()
-        extractor = FeatureExtractor(  # type: ignore[call-arg]
-            n_features=args.n_features,
-            sift_contrast_threshold=args.sift_contrast_threshold,
-            sift_edge_threshold=args.sift_edge_threshold,
-            sift_n_octave_layers=args.sift_n_octave_layers,
-            sift_sigma=args.sift_sigma,
-        )
+        _feat_backend = getattr(args, "feature_backend", "sift")
+        if _feat_backend == "superpoint":
+            extractor = SuperPointExtractor(n_features=args.n_features)
+        else:
+            extractor = FeatureExtractor(  # type: ignore[call-arg]
+                n_features=args.n_features,
+                sift_contrast_threshold=args.sift_contrast_threshold,
+                sift_edge_threshold=args.sift_edge_threshold,
+                sift_n_octave_layers=args.sift_n_octave_layers,
+                sift_sigma=args.sift_sigma,
+            )
         features = extractor.extract_all(image_paths)
         logger.info(f"       Done in {time.time()-t:.1f}s")
         _save_checkpoint(ckpt_dir, "features", features, img_hash)
@@ -794,12 +848,18 @@ def main(argv=None) -> int:
     # ─────────────────────────────────────────────────────────────────────
     # Stage 3 — Feature matching
     # ─────────────────────────────────────────────────────────────────────
-    _match_desc = args.retrieval if args.retrieval != "none" else args.match_strategy
+    _feat_backend_active = getattr(args, "feature_backend", "sift")
+    _match_desc = (
+        f"lightglue" if _feat_backend_active == "superpoint"
+        else (args.retrieval if args.retrieval != "none" else args.match_strategy)
+    )
     logger.info(f"\n[3/6]  Feature matching  [{_match_desc}]…")
     # Include strategy + key params in the checkpoint key so changing
-    # --match_strategy, --retrieval, or --ratio correctly triggers a re-match.
+    # --match_strategy, --retrieval, --feature-backend, or --ratio triggers a re-match.
     _key_parts = [f"matches_{_match_desc}_r{args.ratio:.3f}"]
-    if args.retrieval == "dinov2":
+    if _feat_backend_active == "superpoint":
+        pass   # no extra params needed for lightglue key
+    elif args.retrieval == "dinov2":
         _key_parts.append(f"tk{args.retrieval_top_k}")
     elif args.match_strategy == "sequential":
         _key_parts.append(f"w{args.sequential_window}")
@@ -816,7 +876,11 @@ def main(argv=None) -> int:
             cross_check=True,
             min_matches=args.min_matches,
         )
-        if args.retrieval == "dinov2":
+        if _feat_backend_active == "superpoint":
+            all_matches = LightGlueMatcher(
+                min_matches=args.min_matches,
+            ).match_all(features)
+        elif args.retrieval == "dinov2":
             all_matches = DINOv2Matcher(
                 top_k=args.retrieval_top_k,
                 **common_kw,
@@ -918,6 +982,15 @@ def main(argv=None) -> int:
     logger.info("\n[5/6]  Incremental reconstruction…")
     t = time.time()
     refine_intrinsics = not args.no_refine_intrinsics
+
+    per_cam_intr = None
+    if getattr(args, "per_camera_intrinsics", False):
+        from sfm.intrinsics import estimate_per_image
+        per_cam_intr = estimate_per_image(features, K, dist_coeffs)
+        logger.info(
+            f"Per-camera intrinsics: initialised {len(per_cam_intr)} cameras from EXIF"
+        )
+
     sfm = IncrementalSfM(
         features=features,
         verified_pairs=verified,
@@ -929,6 +1002,8 @@ def main(argv=None) -> int:
         fix_principal_point=getattr(args, "ba_fix_principal_point", False),
         visualizer=viz,
         merge_tracks=getattr(args, "track_merge", False),
+        per_camera_intrinsics=per_cam_intr,
+        ba_backend=getattr(args, "ba_backend", "scipy"),
     )
     try:
         cameras, points_3d, observations, kp_to_3d = sfm.reconstruct()
@@ -1012,7 +1087,10 @@ def main(argv=None) -> int:
                     _covis_counts[_key] = _covis_counts.get(_key, 0) + 1
 
         image_paths_map = {idx: features[idx]["image_path"] for idx in features}
-        densifier = MVSDensifier()
+        densifier = MVSDensifier(
+            mvs_fusion=getattr(args, "mvs_fusion", False),
+            fusion_min_views=getattr(args, "mvs_fusion_min_views", 2),
+        )
         dense_pts, dense_colors = densifier.densify(
             cameras=cameras,
             K=K,
