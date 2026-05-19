@@ -165,16 +165,23 @@ class PointCloudExporter:
             img = image_cache[img_idx]
 
             good_pts = pt_arr[good]
-            good_xs  = np.round(obs_2d[good, 0]).astype(np.int32)
-            good_ys  = np.round(obs_2d[good, 1]).astype(np.int32)
+            fxs = obs_2d[good, 0]
+            fys = obs_2d[good, 1]
 
             h, w = img.shape[:2]
-            np.clip(good_xs, 0, w - 1, out=good_xs)
-            np.clip(good_ys, 0, h - 1, out=good_ys)
+            fxs = np.clip(fxs, 0.0, w - 1.0)
+            fys = np.clip(fys, 0.0, h - 1.0)
 
-            # Vectorised color lookup: sample all good points at once
-            bgr_batch = img[good_ys, good_xs]            # (M, 3) uint8 BGR
-            rgb_batch = bgr_batch[:, ::-1].astype(np.float64)   # → RGB float
+            # Bilinear interpolation: sample all three channels at once.
+            # map_coordinates with order=1 is equivalent to bilinear sampling
+            # and avoids the ~0.5 px colour fringe that nearest-pixel produces.
+            from scipy.ndimage import map_coordinates  # noqa: PLC0415
+            img_f = img.astype(np.float64)
+            coords = np.array([fys, fxs])   # (2, M) — row, col order
+            b = map_coordinates(img_f[:, :, 0], coords, order=1, mode="nearest")
+            g = map_coordinates(img_f[:, :, 1], coords, order=1, mode="nearest")
+            r = map_coordinates(img_f[:, :, 2], coords, order=1, mode="nearest")
+            rgb_batch = np.stack([r, g, b], axis=1)   # BGR→RGB reorder
 
             np.add.at(color_sum,   good_pts, rgb_batch)
             np.add.at(color_count, good_pts, 1)

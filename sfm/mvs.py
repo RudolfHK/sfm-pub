@@ -161,10 +161,24 @@ class MVSDensifier:
                     logger.debug(f"MVS: pair ({i},{j}) missing image path — skip")
                     continue
 
+                # SGBM requires the left camera to be to the left (positive X) of
+                # the right camera so that valid disparities are ≥ minDisparity=0.
+                # When t_rel[0] < 0, camera j is to the LEFT of camera i in i's
+                # rectified frame — swap roles so disparity is always positive.
+                if float(t_rel[0, 0]) < 0:
+                    Ri_proc, ti_proc = Rj, tj
+                    R_rel_proc = Ri @ Rj.T
+                    t_rel_proc = (ti - R_rel_proc @ tj).reshape(3, 1)
+                    path_left, path_right = image_paths[j], image_paths[i]
+                else:
+                    Ri_proc, ti_proc = Ri, ti
+                    R_rel_proc, t_rel_proc = R_rel, t_rel
+                    path_left, path_right = image_paths[i], image_paths[j]
+
                 pts, colors = self._process_pair(
-                    Ri, ti, R_rel, t_rel,
+                    Ri_proc, ti_proc, R_rel_proc, t_rel_proc,
                     K, dist_coeffs,
-                    image_paths[i], image_paths[j],
+                    path_left, path_right,
                 )
 
                 if len(pts) > 0:

@@ -870,15 +870,12 @@ class IncrementalSfM:
     def _add_obs(
         self, img_idx: int, pt3d_idx: int, pt2d: np.ndarray
     ) -> None:
+        if img_idx in self._pt_observers[pt3d_idx]:
+            return
         self.observations.append(
             (img_idx, pt3d_idx, float(pt2d[0]), float(pt2d[1]))
         )
-        # Maintain covisibility: img_idx becomes covisible with every image
-        # that already observes the same 3-D point. Uses a set to skip
-        # duplicate updates when _add_obs is called multiple times for the
-        # same (img_idx, pt3d_idx) pair.
-        if img_idx not in self._pt_observers[pt3d_idx]:
-            for other_img in self._pt_observers[pt3d_idx]:
-                self.covisibility[img_idx].add(other_img)
-                self.covisibility[other_img].add(img_idx)
-            self._pt_observers[pt3d_idx].add(img_idx)
+        for other_img in self._pt_observers[pt3d_idx]:
+            self.covisibility[img_idx].add(other_img)
+            self.covisibility[other_img].add(img_idx)
+        self._pt_observers[pt3d_idx].add(img_idx)

@@ -771,7 +771,12 @@ def main(argv=None) -> int:
     logger.info(f"\n[3/6]  Feature matching  [{args.match_strategy}]…")
     # Include strategy + key params in the checkpoint key so changing
     # --match_strategy or --ratio correctly triggers a re-match.
-    match_ckpt_key = f"matches_{args.match_strategy}_r{args.ratio:.3f}"
+    _key_parts = [f"matches_{args.match_strategy}_r{args.ratio:.3f}"]
+    if args.match_strategy == "sequential":
+        _key_parts.append(f"w{args.sequential_window}")
+    elif args.match_strategy == "vocab_tree":
+        _key_parts.append(f"vw{args.vocab_words}_tk{args.vocab_top_k}")
+    match_ckpt_key = "_".join(_key_parts)
     all_matches = None
     if args.resume:
         all_matches = _load_checkpoint(ckpt_dir, match_ckpt_key, img_hash)
