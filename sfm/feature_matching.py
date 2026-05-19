@@ -22,7 +22,7 @@ All GPU paths fall back to CPU FLANN automatically on OOM or import errors.
 
 import logging
 from itertools import combinations
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -588,6 +588,215 @@ class VocabTreeMatcher:
         pairs: set = set()
         for r in range(len(indices)):
             for c in top[r]:
+                gi, gj = indices[r], indices[int(c)]
+                pairs.add((min(gi, gj), max(gi, gj)))
+        return sorted(pairs)
+
+
+# ─── DINOv2 retrieval-guided matcher ─────────────────────────────────────────
+
+class DINOv2Matcher:
+    """
+    Image retrieval via DINOv2 CLS-token embeddings with FAISS (or numpy)
+    approximate nearest-neighbour search, followed by standard SIFT matching
+    on the retrieved candidate pairs.
+
+    Activated with ``--retrieval dinov2``.  Requires ``torch`` (included in
+    the ``gpu`` extra).  Uses FAISS for fast ANN when available; falls back to
+    numpy cosine similarity automatically.
+
+    Complexity: O(N) DINOv2 forward passes + O(N·top_k) SIFT match runs.
+
+    Parameters
+    ----------
+    top_k           : Number of nearest neighbours to retrieve per image.
+    ratio_threshold : Lowe ratio test threshold for descriptor matching.
+    cross_check     : Mutual-best consistency filter.
+    min_matches     : Minimum raw matches to keep a candidate pair.
+    model_name      : DINOv2 variant to load from torch.hub.
+    image_size      : Resize shorter side to this before embedding.
+    """
+
+    _IMAGENET_MEAN = (0.485, 0.456, 0.406)
+    _IMAGENET_STD  = (0.229, 0.224, 0.225)
+
+    def __init__(
+        self,
+        top_k: int = 10,
+        ratio_threshold: float = 0.75,
+        cross_check: bool = True,
+        min_matches: int = 15,
+        model_name: str = "dinov2_vits14",
+        image_size: int = 224,
+    ) -> None:
+        self.top_k           = top_k
+        self.ratio_threshold = ratio_threshold
+        self.cross_check     = cross_check
+        self.min_matches     = min_matches
+        self.model_name      = model_name
+        self.image_size      = image_size
+        self._matcher        = _make_flann()
+        self._model          = None   # lazy-loaded on first call
+
+    # ── public API ────────────────────────────────────────────────────────
+
+    def match_all(self, features: dict) -> MatchDict:
+        indices = sorted(features.keys())
+        n       = len(indices)
+
+        if n <= self.top_k + 1:
+            logger.info(
+                f"DINOv2: dataset small ({n} images) — using exhaustive matching"
+            )
+            base = FeatureMatcher(self.ratio_threshold, self.cross_check, self.min_matches)
+            return base.match_all(features)
+
+        logger.info(
+            f"DINOv2 retrieval: extracting embeddings for {n} images "
+            f"(model={self.model_name})…"
+        )
+        embeddings = self._extract_embeddings(features, indices)  # (N, D)
+        candidates = self._retrieve_candidates(embeddings, indices)
+        logger.info(
+            f"DINOv2: {len(candidates)} candidate pairs → running SIFT matching…"
+        )
+
+        matches: MatchDict = {}
+        for i, j in candidates:
+            m = _match_pair(
+                self._matcher,
+                features[i]["descriptors"],
+                features[j]["descriptors"],
+                self.ratio_threshold,
+                self.cross_check,
+            )
+            if len(m) >= self.min_matches:
+                matches[(i, j)] = m
+
+        logger.info(
+            f"DINOv2 matching done: {len(matches)}/{len(candidates)} pairs retained"
+        )
+        return matches
+
+    # ── internals ─────────────────────────────────────────────────────────
+
+    def _load_model(self):
+        """Lazy-load DINOv2 from torch.hub; cache on self._model."""
+        if self._model is not None:
+            return self._model
+        try:
+            import torch
+            model = torch.hub.load(
+                "facebookresearch/dinov2",
+                self.model_name,
+                verbose=False,
+            )
+            device = get_device()
+            if device is not None:
+                model = model.to(device)
+            model.eval()
+            self._model = model
+            logger.info(
+                f"DINOv2: loaded {self.model_name} on "
+                f"{device if device else 'cpu'}"
+            )
+            return model
+        except Exception as exc:
+            raise RuntimeError(
+                f"DINOv2 model could not be loaded: {exc}.  "
+                "Install torch and ensure internet access for torch.hub."
+            ) from exc
+
+    def _preprocess(self, bgr: np.ndarray) -> "torch.Tensor":
+        """Resize, normalise to ImageNet stats, return (1, 3, H, W) tensor."""
+        import torch
+
+        h, w = bgr.shape[:2]
+        scale = self.image_size / min(h, w)
+        new_h, new_w = int(round(h * scale)), int(round(w * scale))
+        resized = cv2.resize(bgr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        rgb = resized[:, :, ::-1].astype(np.float32) / 255.0
+
+        mean = np.array(self._IMAGENET_MEAN, dtype=np.float32)
+        std  = np.array(self._IMAGENET_STD,  dtype=np.float32)
+        rgb = (rgb - mean) / std
+
+        tensor = torch.from_numpy(rgb.transpose(2, 0, 1)).unsqueeze(0)  # (1,3,H,W)
+        return tensor
+
+    def _extract_embeddings(self, features: dict, indices: List[int]) -> np.ndarray:
+        """Return (N, D) float32 L2-normalised DINOv2 CLS embeddings."""
+        import torch
+
+        model  = self._load_model()
+        device = get_device()
+        embs: List[np.ndarray] = []
+
+        for idx in indices:
+            path = features[idx]["image_path"]
+            bgr  = cv2.imread(str(path))
+            if bgr is None:
+                embs.append(np.zeros(model.embed_dim, dtype=np.float32))
+                continue
+
+            inp = self._preprocess(bgr)
+            if device is not None:
+                inp = inp.to(device)
+
+            with torch.no_grad():
+                emb = model(inp)   # (1, D) — CLS token
+            embs.append(emb.squeeze(0).cpu().float().numpy())
+
+        mat = np.vstack(embs)   # (N, D)
+        norms = np.linalg.norm(mat, axis=1, keepdims=True).clip(min=1e-10)
+        return mat / norms      # L2-normalise → cosine sim = dot product
+
+    def _retrieve_candidates(
+        self, embeddings: np.ndarray, indices: List[int]
+    ) -> List[Tuple[int, int]]:
+        """
+        Find top-k nearest neighbours per image.
+        Uses FAISS IndexFlatIP when available; falls back to numpy dot product.
+        """
+        k = min(self.top_k + 1, len(indices))   # +1 because self is always #1
+
+        try:
+            import faiss  # noqa: F401
+            return self._retrieve_faiss(embeddings, indices, k)
+        except ImportError:
+            pass
+
+        return self._retrieve_numpy(embeddings, indices, k)
+
+    def _retrieve_faiss(
+        self, embeddings: np.ndarray, indices: List[int], k: int
+    ) -> List[Tuple[int, int]]:
+        import faiss
+
+        dim   = embeddings.shape[1]
+        index = faiss.IndexFlatIP(dim)
+        index.add(embeddings.astype(np.float32))
+        _, I = index.search(embeddings.astype(np.float32), k)
+
+        pairs: set = set()
+        for r in range(len(indices)):
+            for c in I[r]:
+                if c == r:
+                    continue
+                gi, gj = indices[r], indices[int(c)]
+                pairs.add((min(gi, gj), max(gi, gj)))
+        return sorted(pairs)
+
+    def _retrieve_numpy(
+        self, embeddings: np.ndarray, indices: List[int], k: int
+    ) -> List[Tuple[int, int]]:
+        sim = embeddings @ embeddings.T   # (N, N) cosine similarity
+        np.fill_diagonal(sim, -1.0)
+
+        pairs: set = set()
+        for r in range(len(indices)):
+            top = np.argsort(sim[r])[::-1][: k - 1]
+            for c in top:
                 gi, gj = indices[r], indices[int(c)]
                 pairs.add((min(gi, gj), max(gi, gj)))
         return sorted(pairs)

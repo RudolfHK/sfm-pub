@@ -186,6 +186,7 @@ class IncrementalSfM:
         refine_intrinsics: bool = True,
         fix_principal_point: bool = False,
         visualizer=None,
+        merge_tracks: bool = False,
     ) -> None:
         self.features            = features
         self.verified_pairs      = verified_pairs
@@ -194,6 +195,7 @@ class IncrementalSfM:
         self.ba_interval         = ba_interval
         self.refine_intrinsics   = refine_intrinsics
         self.fix_principal_point = fix_principal_point
+        self.merge_tracks        = merge_tracks
         self.viz                 = visualizer
         self._ba_step            = 0
 
@@ -250,6 +252,9 @@ class IncrementalSfM:
         """
         if not self.verified_pairs:
             raise ValueError("No verified pairs — cannot reconstruct.")
+
+        if self.merge_tracks:
+            self._merge_tracks()
 
         # ── Seed ──────────────────────────────────────────────────────────
         seed_i, seed_j = self._select_seed_pair()
@@ -786,6 +791,97 @@ class IncrementalSfM:
             if old < n and keep[old]
         }
 
+    # ── track merging (union-find) ────────────────────────────────────────
+
+    def _merge_tracks(self) -> None:
+        """
+        Build consistent feature tracks across all verified pairs using a
+        union-find (disjoint-set union) structure, then rewrite verified_pairs
+        so that each keypoint participates in at most one track.
+
+        This pre-processing step prevents the incremental SfM loop from creating
+        duplicate 3-D points for the same physical scene point when a keypoint is
+        matched to more than one image independently.
+
+        The approach:
+        1.  Assign a global node ID to every (img_idx, kp_idx) observation.
+        2.  Union matched pairs across all verified pairs.
+        3.  Replace inlier_matches with the transitive-closure consistent subset:
+            for each pair (i, j), only keep matches where both keypoints agree
+            with their track root (no contradictory assignments).
+        """
+        # Collect all (img_idx, kp_idx) nodes
+        node_to_id: Dict[Tuple[int, int], int] = {}
+        id_ctr = [0]
+
+        def node_id(img: int, kp: int) -> int:
+            key = (img, kp)
+            if key not in node_to_id:
+                node_to_id[key] = id_ctr[0]
+                id_ctr[0] += 1
+            return node_to_id[key]
+
+        for pair_key, data in self.verified_pairs.items():
+            i, j = pair_key
+            for m in data["inlier_matches"]:
+                node_id(i, int(m[0]))
+                node_id(j, int(m[1]))
+
+        n_nodes = id_ctr[0]
+        if n_nodes == 0:
+            return
+
+        parent = list(range(n_nodes))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        # Union all matched pairs
+        for pair_key, data in self.verified_pairs.items():
+            i, j = pair_key
+            for m in data["inlier_matches"]:
+                union(node_id(i, int(m[0])), node_id(j, int(m[1])))
+
+        # Filter inlier_matches: within each pair, drop matches where the two
+        # keypoints would create a conflicting track assignment (same root but
+        # different source keypoints merged to the same track).
+        n_removed = 0
+        for pair_key, data in self.verified_pairs.items():
+            i, j = pair_key
+            kept = []
+            # Track which roots have already been assigned in this pair
+            used_roots_i: Set[int] = set()
+            used_roots_j: Set[int] = set()
+            for m in data["inlier_matches"]:
+                ki, kj = int(m[0]), int(m[1])
+                ri = find(node_id(i, ki))
+                rj = find(node_id(j, kj))
+                if ri in used_roots_i or rj in used_roots_j:
+                    n_removed += 1
+                    continue
+                used_roots_i.add(ri)
+                used_roots_j.add(rj)
+                kept.append(m)
+            if kept:
+                data["inlier_matches"] = np.array(kept, dtype=data["inlier_matches"].dtype)
+                data["n_inliers"] = len(kept)
+            else:
+                data["inlier_matches"] = np.zeros((0, 2), dtype=np.int32)
+                data["n_inliers"] = 0
+
+        logger.info(
+            f"Track merging: {n_nodes} nodes, "
+            f"{n_removed} conflicting matches removed"
+        )
+
     # ── bundle adjustment wrapper ─────────────────────────────────────────
 
     def _run_ba(self) -> None:
@@ -822,6 +918,79 @@ class IncrementalSfM:
                     self._undist_kps[img_idx] = undistort_points(
                         kps, self.K, self.dist_coeffs
                     )
+
+        self._retriangulate_after_ba()
+
+    def _retriangulate_after_ba(self) -> None:
+        """
+        After BA refines camera poses, re-triangulate keypoint pairs whose 3-D
+        track was not yet established.  Only registered camera pairs that share a
+        verified match are considered.  New points go through the standard
+        acceptance filter (depth + angle + reprojection) so they are consistent
+        with the updated geometry.
+        """
+        if len(self.cameras) < 2:
+            return
+
+        n_new_total = 0
+        registered  = set(self.cameras.keys())
+
+        for pair_key, data in self.verified_pairs.items():
+            i, j = pair_key
+            if i not in registered or j not in registered:
+                continue
+
+            R_i = self.cameras[i]["R"];  t_i = self.cameras[i]["t"]
+            R_j = self.cameras[j]["R"];  t_j = self.cameras[j]["t"]
+            P_i = projection_matrix(self.K, R_i, t_i)
+            P_j = projection_matrix(self.K, R_j, t_j)
+            C_i = camera_center(R_i, t_i)
+            C_j = camera_center(R_j, t_j)
+
+            kps_i_ud   = self._undist_kps[i]
+            kps_j_ud   = self._undist_kps[j]
+            kps_i_orig = self.features[i]["keypoints"]
+            kps_j_orig = self.features[j]["keypoints"]
+
+            matches = data["inlier_matches"]
+            # Collect match pairs that still lack a 3-D assignment on BOTH sides
+            free_ki, free_kj = [], []
+            for m in matches:
+                ki, kj = int(m[0]), int(m[1])
+                if (i, ki) not in self.kp_to_3d and (j, kj) not in self.kp_to_3d:
+                    free_ki.append(ki)
+                    free_kj.append(kj)
+
+            if not free_ki:
+                continue
+
+            pts1_ud = kps_i_ud[free_ki]
+            pts2_ud = kps_j_ud[free_kj]
+            X3d, valid_w = _triangulate_batch(P_i, P_j, pts1_ud, pts2_ud)
+
+            if not valid_w.any():
+                continue
+
+            vw_idx = np.where(valid_w)[0]
+            accept = np.zeros(len(free_ki), dtype=bool)
+            accept[vw_idx] = _accept_batch(
+                X3d[vw_idx],
+                R_i, t_i, R_j, t_j,
+                pts1_ud[vw_idx], pts2_ud[vw_idx],
+                C_i, C_j, self.K, self.max_reproj_err,
+            )
+
+            for k in np.where(accept)[0]:
+                ki = free_ki[k]; kj = free_kj[k]
+                orig_pt_i = kps_i_orig[ki].astype(np.float64)
+                orig_pt_j = kps_j_orig[kj].astype(np.float64)
+                idx = self._add_point(X3d[k], i, ki, orig_pt_i)
+                self._link_kp(j, kj, idx)
+                self._add_obs(j, idx, orig_pt_j)
+                n_new_total += 1
+
+        if n_new_total:
+            logger.info(f"  Re-triangulation after BA: +{n_new_total} new 3-D points")
 
     # ── small utilities ───────────────────────────────────────────────────
 

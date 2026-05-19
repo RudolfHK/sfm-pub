@@ -136,6 +136,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of nearest-neighbour images retrieved per query (vocab_tree).",
     )
     p.add_argument(
+        "--retrieval",
+        choices=["none", "dinov2"],
+        default="none",
+        help=(
+            "Image-retrieval backend to restrict matching to visually similar pairs. "
+            "'dinov2' uses DINOv2 CLS-token embeddings (requires torch; FAISS "
+            "accelerates ANN search when installed). Overrides --match_strategy "
+            "when set to anything other than 'none'."
+        ),
+    )
+    p.add_argument(
+        "--retrieval_top_k",
+        type=int,
+        default=10,
+        help="Number of nearest-neighbour images per query for --retrieval dinov2.",
+    )
+    p.add_argument(
         "--ratio",
         type=float,
         default=0.75,
@@ -188,6 +205,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Keep cx/cy fixed during bundle adjustment (default: optimize cx/cy). "
             "Use on small datasets or when BA convergence is poor."
+        ),
+    )
+    p.add_argument(
+        "--track-merge",
+        action="store_true",
+        help=(
+            "Enable union-find track merging before incremental SfM.  "
+            "Removes contradictory multi-assignment matches so each keypoint "
+            "participates in at most one 3-D track, reducing duplicate 3-D points."
         ),
     )
     # MVS densification
@@ -676,7 +702,7 @@ def main(argv=None) -> int:
 
     # ── Imports (deferred so --help is instant) ───────────────────────────
     from sfm.feature_extraction import FeatureExtractor
-    from sfm.feature_matching import FeatureMatcher, SequentialMatcher, VocabTreeMatcher
+    from sfm.feature_matching import FeatureMatcher, SequentialMatcher, VocabTreeMatcher, DINOv2Matcher
     from sfm.geometric_verification import GeometricVerifier
     from sfm.reconstruction import IncrementalSfM
     from sfm.point_cloud import PointCloudExporter
@@ -768,11 +794,14 @@ def main(argv=None) -> int:
     # ─────────────────────────────────────────────────────────────────────
     # Stage 3 — Feature matching
     # ─────────────────────────────────────────────────────────────────────
-    logger.info(f"\n[3/6]  Feature matching  [{args.match_strategy}]…")
+    _match_desc = args.retrieval if args.retrieval != "none" else args.match_strategy
+    logger.info(f"\n[3/6]  Feature matching  [{_match_desc}]…")
     # Include strategy + key params in the checkpoint key so changing
-    # --match_strategy or --ratio correctly triggers a re-match.
-    _key_parts = [f"matches_{args.match_strategy}_r{args.ratio:.3f}"]
-    if args.match_strategy == "sequential":
+    # --match_strategy, --retrieval, or --ratio correctly triggers a re-match.
+    _key_parts = [f"matches_{_match_desc}_r{args.ratio:.3f}"]
+    if args.retrieval == "dinov2":
+        _key_parts.append(f"tk{args.retrieval_top_k}")
+    elif args.match_strategy == "sequential":
         _key_parts.append(f"w{args.sequential_window}")
     elif args.match_strategy == "vocab_tree":
         _key_parts.append(f"vw{args.vocab_words}_tk{args.vocab_top_k}")
@@ -787,7 +816,12 @@ def main(argv=None) -> int:
             cross_check=True,
             min_matches=args.min_matches,
         )
-        if args.match_strategy == "sequential":
+        if args.retrieval == "dinov2":
+            all_matches = DINOv2Matcher(
+                top_k=args.retrieval_top_k,
+                **common_kw,
+            ).match_all(features)
+        elif args.match_strategy == "sequential":
             all_matches = SequentialMatcher(
                 window=args.sequential_window,
                 **common_kw,
@@ -894,6 +928,7 @@ def main(argv=None) -> int:
         refine_intrinsics=refine_intrinsics,
         fix_principal_point=getattr(args, "ba_fix_principal_point", False),
         visualizer=viz,
+        merge_tracks=getattr(args, "track_merge", False),
     )
     try:
         cameras, points_3d, observations, kp_to_3d = sfm.reconstruct()

@@ -166,6 +166,24 @@ class GeometricVerifier:
         pts1_fin = pts1[mask_f]   # (N1, 2) undistorted F-inliers
         pts2_fin = pts2[mask_f]
 
+        # ── Planarity degeneracy check ─────────────────────────────────────
+        # When all inlier correspondences lie near a plane the essential matrix
+        # is ill-conditioned and recoverPose may return a spurious rotation.
+        # Detection: the F-inlier points in image 1 are near-planar in 2-D when
+        # the smallest singular value of the centred coordinate matrix is very
+        # small relative to the second-smallest (rank collapses to 1).
+        # Threshold: σ₂/σ₁ < 0.01 indicates a degenerate collinear / planar scene.
+        if len(pts1_fin) >= 4:
+            _centered = pts1_fin - pts1_fin.mean(0)
+            _sv = np.linalg.svd(_centered, compute_uv=False)
+            _ratio = float(_sv[-1] / _sv[-2]) if _sv[-2] > 1e-10 else 0.0
+            if _ratio < 0.01:
+                logger.debug(
+                    f"  Planar/collinear degeneracy detected (σ₂/σ₁={_ratio:.4f}), "
+                    "skipping pair"
+                )
+                return None
+
         # ── Essential matrix (USAC_MAGSAC, same quality level as F step) ──
         try:
             E, mask_e = cv2.findEssentialMat(

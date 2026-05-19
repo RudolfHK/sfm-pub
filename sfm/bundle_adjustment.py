@@ -51,7 +51,7 @@ from typing import Dict, Optional, Tuple
 import cv2
 import numpy as np
 from scipy.optimize import least_squares
-from scipy.sparse import lil_matrix
+from scipy.sparse import csr_matrix, lil_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ def _build_sparsity_v2(
     pt_indices: np.ndarray,
     refine_intrinsics: bool,
     fix_principal_point: bool = True,
-) -> "scipy.sparse.csr_matrix":
+) -> "csr_matrix":
     n_obs    = len(cam_indices)
     if refine_intrinsics:
         n_shared = 3 if fix_principal_point else 5
@@ -188,31 +188,35 @@ def _build_sparsity_v2(
     n_params = n_shared + n_cameras * 6 + n_points * 3
     n_res    = n_obs * 2
 
-    J = lil_matrix((n_res, n_params), dtype=np.int8)
+    # Vectorized construction: build (row, col) COO arrays without a Python loop.
+    rows, cols = [], []
 
-    for k in range(n_obs):
-        c = int(cam_indices[k])
-        p = int(pt_indices[k])
+    k     = np.arange(n_obs)
+    row_x = 2 * k          # x-residual row for observation k
+    row_y = 2 * k + 1      # y-residual row for observation k
 
-        row_x = 2 * k
-        row_y = 2 * k + 1
+    if refine_intrinsics:
+        # n_shared dense columns — each residual (x and y) touches all of them
+        for s in range(n_shared):
+            rows.append(row_x); cols.append(np.full(n_obs, s))
+            rows.append(row_y); cols.append(np.full(n_obs, s))
 
-        # Shared intrinsics (dense columns — every residual touches these)
-        if refine_intrinsics:
-            J[row_x, 0:n_shared] = 1
-            J[row_y, 0:n_shared] = 1
+    # Camera pose block: 6 consecutive params per camera
+    cam_starts = n_shared + cam_indices.astype(np.intp) * 6
+    for d in range(6):
+        rows.append(row_x); cols.append(cam_starts + d)
+        rows.append(row_y); cols.append(cam_starts + d)
 
-        # Camera pose block (6 params)
-        cam_start = n_shared + c * 6
-        J[row_x, cam_start : cam_start + 6] = 1
-        J[row_y, cam_start : cam_start + 6] = 1
+    # 3-D point block: 3 consecutive params per point
+    pt_starts = n_shared + n_cameras * 6 + pt_indices.astype(np.intp) * 3
+    for d in range(3):
+        rows.append(row_x); cols.append(pt_starts + d)
+        rows.append(row_y); cols.append(pt_starts + d)
 
-        # 3-D point block (3 params)
-        pt_start = n_shared + n_cameras * 6 + p * 3
-        J[row_x, pt_start : pt_start + 3] = 1
-        J[row_y, pt_start : pt_start + 3] = 1
-
-    return J.tocsr()
+    rows = np.concatenate(rows)
+    cols = np.concatenate(cols)
+    data = np.ones(len(rows), dtype=np.int8)
+    return csr_matrix((data, (rows, cols)), shape=(n_res, n_params))
 
 
 # ─── BundleAdjuster class ────────────────────────────────────────────────────
