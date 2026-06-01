@@ -22,7 +22,7 @@ All GPU paths fall back to CPU FLANN automatically on OOM or import errors.
 
 import logging
 from itertools import combinations
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -122,11 +122,21 @@ def _match_pair_gpu(
     d1 = torch.from_numpy(desc1.astype(np.float32)).to(device)  # (N, 128)
     d2 = torch.from_numpy(desc2.astype(np.float32)).to(device)  # (M, 128)
 
-    dist = torch.cdist(d1, d2)  # (N, M)  L2 distances
-
-    # Forward ratio test: for each query, top-2 train distances
+    # Chunked cdist: process d1 in blocks of 1024 rows so peak GPU memory
+    # stays at 1024×M×4 bytes (~32 MB for M=8000) instead of N×M×4 bytes
+    # (~256 MB for N=M=8000), preventing OOM on 4 GB GPUs.
+    _CHUNK = 1024
     k = min(2, d2.shape[0])
-    vals_f, idx_f = dist.topk(k, dim=1, largest=False)  # (N, k)
+    all_vals: list = []
+    all_idx:  list = []
+    for _start in range(0, d1.shape[0], _CHUNK):
+        _block = d1[_start : _start + _CHUNK]
+        _d = torch.cdist(_block, d2)
+        _v, _i = _d.topk(k, dim=1, largest=False)
+        all_vals.append(_v)
+        all_idx.append(_i)
+    vals_f = torch.cat(all_vals, dim=0)  # (N, k)
+    idx_f  = torch.cat(all_idx,  dim=0)  # (N, k)
 
     if k < 2:
         # Only one train descriptor: ratio test is undefined, keep all
@@ -142,9 +152,18 @@ def _match_pair_gpu(
             return np.zeros((0, 2), dtype=np.int32)
         return torch.stack([q_idx, t_idx], dim=1).cpu().numpy().astype(np.int32)
 
-    # Backward ratio test (reuse transposed dist — no second cdist call)
+    # Backward ratio test: chunk d2 vs d1
     k2 = min(2, d1.shape[0])
-    vals_b, idx_b = dist.T.topk(k2, dim=1, largest=False)  # (M, k)
+    all_vals_b: list = []
+    all_idx_b:  list = []
+    for _start in range(0, d2.shape[0], _CHUNK):
+        _block = d2[_start : _start + _CHUNK]
+        _d = torch.cdist(_block, d1)
+        _v, _i = _d.topk(k2, dim=1, largest=False)
+        all_vals_b.append(_v)
+        all_idx_b.append(_i)
+    vals_b = torch.cat(all_vals_b, dim=0)  # (M, k2)
+    idx_b  = torch.cat(all_idx_b,  dim=0)  # (M, k2)
 
     if k2 < 2:
         mask_b = torch.ones(d2.shape[0], dtype=torch.bool, device=device)
@@ -804,6 +823,153 @@ class DINOv2Matcher:
 
 # ─── LightGlue matcher (SuperPoint + LightGlue) ───────────────────────────────
 
+class LoFTRMatcher:
+    """
+    Detector-free dense matching using kornia's LoFTR.
+
+    LoFTR produces semi-dense correspondences directly from image pairs using
+    a Transformer architecture, without requiring any keypoint detection step.
+    It excels on textureless surfaces where SIFT and DISK fail to detect
+    repeatable keypoints.
+
+    Requires ``torch`` and ``kornia>=0.7``.
+    Activated by ``--match-strategy loftr`` in run_sfm.py.
+
+    Parameters
+    ----------
+    min_matches     : Minimum confident matches to retain a pair.
+    pretrained      : LoFTR pretrained variant ('outdoor' or 'indoor').
+    candidate_pairs : Optional pre-filtered pair list.  None = exhaustive.
+    """
+
+    def __init__(
+        self,
+        min_matches: int = 15,
+        pretrained: str = "outdoor",
+        candidate_pairs: Optional[List[Tuple[int, int]]] = None,
+    ) -> None:
+        self.min_matches     = min_matches
+        self.pretrained      = pretrained
+        self.candidate_pairs = candidate_pairs
+        self._matcher        = None   # lazy-loaded
+
+    def _load_matcher(self):
+        if self._matcher is not None:
+            return self._matcher
+        try:
+            import torch
+            import kornia.feature as KF
+
+            device = get_device()
+            lg = KF.LoFTR(pretrained=self.pretrained).eval()
+            if device is not None:
+                lg = lg.to(device)
+            self._matcher = lg
+            logger.info(
+                f"LoFTR ({self.pretrained}) loaded on {device if device else 'cpu'}"
+            )
+            return lg
+        except Exception as exc:
+            raise RuntimeError(
+                f"LoFTR could not be initialised: {exc}.  "
+                "Install kornia>=0.7 and torch."
+            ) from exc
+
+    def match_all(self, features: dict) -> MatchDict:
+        """Match all candidate pairs using LoFTR."""
+        indices = sorted(features.keys())
+        if self.candidate_pairs is not None:
+            pairs = self.candidate_pairs
+        else:
+            if len(indices) > 50:
+                logger.warning(
+                    "LoFTR: %d images with no retrieval front-end — exhaustive "
+                    "O(N²)=%d pairs.  Consider using --retrieval dinov2.",
+                    len(indices), len(indices) * (len(indices) - 1) // 2,
+                )
+            pairs = list(combinations(indices, 2))
+
+        n_pairs = len(pairs)
+        logger.info(f"LoFTR matching: {n_pairs} pairs (min_matches={self.min_matches})…")
+
+        loftr = self._load_matcher()
+        matches: MatchDict = {}
+
+        for k, (i, j) in enumerate(pairs):
+            m = self._match_pair_loftr(loftr, features[i], features[j])
+            if len(m) >= self.min_matches:
+                matches[(i, j)] = m
+            if (k + 1) % max(1, n_pairs // 10) == 0:
+                logger.info(f"  … {k+1}/{n_pairs} pairs done")
+
+        logger.info(f"LoFTR done: {len(matches)}/{n_pairs} pairs retained")
+        return matches
+
+    def _match_pair_loftr(self, loftr, feat_i: dict, feat_j: dict) -> np.ndarray:
+        """Run LoFTR on one pair; return (M, 2) pseudo-keypoint-index match array.
+
+        LoFTR produces floating-point coordinates, not integer keypoint indices.
+        We create synthetic integer indices by appending the LoFTR matches as
+        new keypoints to the feature dict so downstream code (geometric
+        verification) can treat them like standard matches.
+        """
+        import torch
+        import cv2 as _cv2
+
+        device = get_device()
+
+        def _to_gray_tensor(path):
+            bgr = _cv2.imread(str(path))
+            if bgr is None:
+                return None
+            gray = _cv2.cvtColor(bgr, _cv2.COLOR_BGR2GRAY)
+            t = torch.from_numpy(gray).float().div(255.0).unsqueeze(0).unsqueeze(0)
+            return t.to(device) if device else t
+
+        t_i = _to_gray_tensor(feat_i["image_path"])
+        t_j = _to_gray_tensor(feat_j["image_path"])
+        if t_i is None or t_j is None:
+            return np.zeros((0, 2), dtype=np.int32)
+
+        try:
+            with torch.no_grad():
+                out = loftr({"image0": t_i, "image1": t_j})
+        except Exception as exc:
+            logger.debug(f"LoFTR pair failed ({exc})")
+            return np.zeros((0, 2), dtype=np.int32)
+
+        conf  = out["confidence"].cpu().numpy()     # (M,)
+        kps0  = out["keypoints0"].cpu().numpy()     # (M, 2) float
+        kps1  = out["keypoints1"].cpu().numpy()     # (M, 2) float
+
+        # Keep only confident matches (LoFTR default threshold is 0.2)
+        good = conf > 0.2
+        if not good.any():
+            return np.zeros((0, 2), dtype=np.int32)
+
+        kps0 = kps0[good]; kps1 = kps1[good]
+
+        # Append LoFTR-generated keypoints to the feature dicts so that
+        # geometric verification can index them.  Use negative base offsets
+        # to distinguish from SIFT keypoints.
+        n_existing_i = len(feat_i["keypoints"])
+        n_existing_j = len(feat_j["keypoints"])
+
+        feat_i["keypoints"] = np.vstack([
+            feat_i["keypoints"],
+            kps0.astype(np.float32),
+        ])
+        feat_j["keypoints"] = np.vstack([
+            feat_j["keypoints"],
+            kps1.astype(np.float32),
+        ])
+
+        n_new = int(good.sum())
+        qi = np.arange(n_existing_i, n_existing_i + n_new, dtype=np.int32)
+        ti = np.arange(n_existing_j, n_existing_j + n_new, dtype=np.int32)
+        return np.stack([qi, ti], axis=1)   # (M, 2)
+
+
 class LightGlueMatcher:
     """
     Pairwise matcher using kornia's LightGlue attention network.
@@ -866,6 +1032,13 @@ class LightGlueMatcher:
         if self.candidate_pairs is not None:
             pairs = self.candidate_pairs
         else:
+            if len(indices) > 50:
+                logger.warning(
+                    "LightGlue: %d images with no retrieval front-end — falling back "
+                    "to exhaustive O(N²)=%d pairs.  Pass candidate_pairs from "
+                    "DINOv2Matcher or VocabTreeMatcher to avoid O(N²) GPU compute.",
+                    len(indices), len(indices) * (len(indices) - 1) // 2,
+                )
             pairs = list(combinations(indices, 2))
 
         n_pairs = len(pairs)

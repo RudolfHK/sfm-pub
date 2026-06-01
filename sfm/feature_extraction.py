@@ -165,6 +165,17 @@ class FeatureExtractor:
 
     # ── backends ─────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _rootsift(descs: np.ndarray) -> np.ndarray:
+        """Hellinger kernel embedding (RootSIFT): L1-normalise then element-wise sqrt.
+
+        Improves nearest-neighbour match quality ~10% at zero extra compute.
+        Reference: Arandjelović & Zisserman, CVPR 2012.
+        """
+        d = descs.astype(np.float32)
+        norms = d.sum(axis=1, keepdims=True).clip(min=1e-10)
+        return np.sqrt(d / norms)
+
     def _extract_sift_cpu(self, gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         kps_cv, descs = self._sift.detectAndCompute(gray, None)
         if not kps_cv:
@@ -173,7 +184,7 @@ class FeatureExtractor:
                 np.zeros((0, 128), dtype=np.float32),
             )
         pts = np.array([kp.pt for kp in kps_cv], dtype=np.float32)
-        return pts, descs.astype(np.float32)
+        return pts, self._rootsift(descs)
 
     def _extract_kornia(self, gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -238,7 +249,7 @@ class FeatureExtractor:
                 )
 
             pts = np.array([kp.pt for kp in kp_out], dtype=np.float32)
-            return pts, descs.astype(np.float32)
+            return pts, self._rootsift(descs)
 
         except Exception as e:
             logger.warning(f"kornia GPU extraction failed ({e}), using CPU SIFT")
@@ -258,6 +269,124 @@ class FeatureExtractor:
             self._sift = cv2.SIFT_create(**self._sift_kwargs())
             self._backend = "cpu_sift"
             return self._extract_sift_cpu(gray)
+
+
+# ─── DISK extractor ──────────────────────────────────────────────────────────
+
+class DISKExtractor:
+    """
+    Feature extractor using kornia's DISK (Deep Image Stochastic Keypoints).
+
+    DISK produces more uniformly-distributed keypoints on textureless surfaces
+    than SIFT, with 128-D descriptors compatible with LightGlue.
+
+    Requires ``torch`` and ``kornia>=0.7``.
+    Activated by ``--feature-backend disk`` in run_sfm.py.
+
+    Parameters
+    ----------
+    n_features : Max keypoints to keep per image (score-sorted).
+    use_cuda   : Force GPU/CPU; None = auto-detect.
+    """
+
+    DESC_DIM = 128
+
+    def __init__(
+        self,
+        n_features: int = 8_000,
+        use_cuda: Optional[bool] = None,
+    ) -> None:
+        self.n_features = n_features
+        self.use_cuda   = _cuda_available() if use_cuda is None else use_cuda
+        self._model     = None   # lazy-loaded
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+        try:
+            import torch
+            import kornia.feature as KF
+
+            model = KF.DISK.from_pretrained("depth").eval()
+            device = get_device()
+            if device is not None and self.use_cuda:
+                model = model.to(device)
+            self._model = model
+            logger.info(
+                f"DISK loaded on {device if device else 'cpu'} "
+                f"(n_features={self.n_features})"
+            )
+            return model
+        except Exception as exc:
+            raise RuntimeError(
+                f"DISK could not be initialised: {exc}.  "
+                "Install kornia>=0.7 and torch."
+            ) from exc
+
+    def extract(self, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Extract DISK keypoints + 128-D descriptors from a BGR image."""
+        import torch
+
+        model  = self._load_model()
+        device = get_device() if self.use_cuda else None
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        t = (
+            torch.from_numpy(gray)
+            .float()
+            .div(255.0)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
+        if device is not None:
+            t = t.to(device)
+
+        try:
+            with torch.no_grad():
+                features = model(t, n=self.n_features, pad_if_not_divisible=True)
+        except Exception as exc:
+            logger.warning(f"DISK inference failed ({exc}), returning empty")
+            return (
+                np.zeros((0, 2), dtype=np.float32),
+                np.zeros((0, self.DESC_DIM), dtype=np.float32),
+            )
+
+        # kornia DISK returns a list[Features] — one per image in batch
+        feat = features[0]
+        kps_t   = feat.keypoints.cpu()      # (N, 2)  x, y in pixels
+        descs_t = feat.descriptors.cpu()    # (N, 128)
+
+        if kps_t.shape[0] == 0:
+            return (
+                np.zeros((0, 2), dtype=np.float32),
+                np.zeros((0, self.DESC_DIM), dtype=np.float32),
+            )
+
+        kps   = kps_t.numpy().astype(np.float32)    # (N, 2)
+        descs = descs_t.numpy().astype(np.float32)  # (N, 128)
+        return kps, descs
+
+    def extract_all(self, image_paths: list) -> Dict[int, dict]:
+        """Same interface as FeatureExtractor.extract_all()."""
+        features: Dict[int, dict] = {}
+        n = len(image_paths)
+        for idx, path in enumerate(image_paths):
+            logger.info(f"  DISK [{idx+1}/{n}]: {Path(path).name}")
+            img = load_image(str(path))
+            kps, descs = self.extract(img)
+            features[idx] = {
+                "keypoints":   kps,
+                "descriptors": descs,
+                "image_path":  Path(path),
+                "image_shape": img.shape,
+            }
+            logger.debug(f"    → {len(kps)} keypoints")
+
+        total = sum(len(f["keypoints"]) for f in features.values())
+        logger.info(
+            f"DISK extraction complete — {total:,} keypoints across {n} images"
+        )
+        return features
 
 
 # ─── SuperPoint extractor ─────────────────────────────────────────────────────

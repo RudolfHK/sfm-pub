@@ -166,6 +166,30 @@ class GeometricVerifier:
         pts1_fin = pts1[mask_f]   # (N1, 2) undistorted F-inliers
         pts2_fin = pts2[mask_f]
 
+        # ── Homography/F competition (Torr criterion) ──────────────────────
+        # For planar scenes H fits as well as F; the Essential matrix derived
+        # from such a degenerate F produces an arbitrary rotation component and
+        # the pair should be rejected rather than producing a wrong pose.
+        # Threshold: if H explains > 85% of F-inliers the scene is (near-)planar.
+        if len(pts1_fin) >= 4:
+            try:
+                _, mask_h = cv2.findHomography(
+                    pts1_fin.reshape(-1, 1, 2),
+                    pts2_fin.reshape(-1, 1, 2),
+                    cv2.USAC_MAGSAC if _HAS_USAC_MAGSAC else cv2.RANSAC,
+                    self.ransac_threshold,
+                )
+                if mask_h is not None:
+                    h_ratio = float(mask_h.ravel().sum()) / len(pts1_fin)
+                    if h_ratio > 0.85:
+                        logger.debug(
+                            f"  H/F competition: H inlier ratio={h_ratio:.2f} > 0.85 "
+                            "— planar/degenerate scene, skipping pair"
+                        )
+                        return None
+            except cv2.error:
+                pass
+
         # ── Planarity degeneracy check ─────────────────────────────────────
         # When all inlier correspondences lie near a plane the essential matrix
         # is ill-conditioned and recoverPose may return a spurious rotation.

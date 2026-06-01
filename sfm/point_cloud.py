@@ -307,9 +307,9 @@ class PointCloudExporter:
             "ply\n"
             "format binary_little_endian 1.0\n"
             f"element vertex {n_pts}\n"
-            "property double x\n"
-            "property double y\n"
-            "property double z\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
             "property uchar red\n"
             "property uchar green\n"
             "property uchar blue\n"
@@ -317,7 +317,7 @@ class PointCloudExporter:
         )
 
         dtype = np.dtype([
-            ("x", "<f8"), ("y", "<f8"), ("z", "<f8"),
+            ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
             ("r", "u1"),  ("g", "u1"),  ("b", "u1"),
         ])
         data       = np.empty(n_pts, dtype=dtype)

@@ -228,14 +228,18 @@ class MVSDensifier:
         K: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Remove world-space points not seen from at least ``fusion_min_views``
-        registered cameras with positive depth.
+        Remove world-space points that are not geometrically consistent across
+        at least ``fusion_min_views`` registered cameras.
 
-        For each candidate point, project into every camera.  Count cameras
-        where depth > 0.  Keep points that meet the minimum-views threshold.
-        This discards floating points from degenerate stereo pairs (featureless
-        surfaces, reflections) that are geometrically inconsistent with the
-        rest of the reconstruction.
+        A point is considered consistent in a camera when:
+          1. Its depth in that camera is positive (> 0.01).
+          2. Its projected pixel (u, v) lies within the image bounds.
+
+        The image bounds are estimated from K as [0, 2*cx] × [0, 2*cy].
+        This is more discriminating than a pure positive-depth check: points
+        from degenerate stereo patches that happen to project behind a wall
+        in the camera coordinate frame but outside the image frame are
+        discarded even if their depth is technically positive.
 
         Activated by ``--mvs-fusion``.
         """
@@ -248,27 +252,39 @@ class MVSDensifier:
         n_req    = min(self.fusion_min_views, n_cams)
 
         # Batch: project all N points into all C cameras at once
-        # Stack R and t into arrays: (C, 3, 3) and (C, 3)
-        R_stack = np.stack([cameras[c]["R"] for c in cam_list], axis=0)  # (C, 3, 3)
+        R_stack = np.stack([cameras[c]["R"] for c in cam_list], axis=0)   # (C, 3, 3)
         t_stack = np.stack([cameras[c]["t"].flatten() for c in cam_list], axis=0)  # (C, 3)
 
-        # X_cam[c, n] = R_stack[c] @ pts[n].T + t_stack[c]
-        # Shape: (C, 3, N)
+        # X_cam[c, :, n] = R_stack[c] @ pts[n] + t_stack[c]
         X_cam = (R_stack @ pts.T[None]) + t_stack[:, :, None]  # (C, 3, N)
 
-        # Depth is the Z component
-        depths = X_cam[:, 2, :]   # (C, N)
+        depths = X_cam[:, 2, :]   # (C, N) — Z in each camera
+        z_safe = np.where(depths > 1e-6, depths, 1e-6)
 
-        # Count cameras with positive depth per point
-        views_per_pt = (depths > 0.01).sum(axis=0)   # (N,)
+        # Project to pixel coords using shared K
+        fx, fy = float(K[0, 0]), float(K[1, 1])
+        cx, cy = float(K[0, 2]), float(K[1, 2])
+        # Image extents estimated from principal point
+        w_est = cx * 2.0; h_est = cy * 2.0
 
+        u = fx * X_cam[:, 0, :] / z_safe + cx   # (C, N)
+        v = fy * X_cam[:, 1, :] / z_safe + cy   # (C, N)
+
+        # Consistent = positive depth AND projected pixel inside image
+        in_bounds = (
+            (depths > 0.01)
+            & (u >= 0) & (u < w_est)
+            & (v >= 0) & (v < h_est)
+        )   # (C, N)
+
+        views_per_pt = in_bounds.sum(axis=0)   # (N,)
         keep = views_per_pt >= n_req
         n_removed = int((~keep).sum())
 
         if n_removed > 0:
             logger.info(
                 f"[MVS fusion] Removed {n_removed}/{n} points "
-                f"with < {n_req} positive-depth views"
+                f"with < {n_req} consistent views (depth + in-bounds projection)"
             )
 
         return pts[keep].astype(np.float64), colors[keep]

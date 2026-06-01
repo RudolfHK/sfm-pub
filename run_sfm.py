@@ -68,13 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--feature-backend",
-        choices=["sift", "superpoint"],
+        choices=["sift", "superpoint", "disk"],
         default="sift",
         help=(
             "Feature extraction backend.  'sift' (default) uses OpenCV SIFT with "
             "optional GPU acceleration via kornia or CUDA SURF.  'superpoint' uses "
             "kornia's SuperPoint neural detector+descriptor (requires torch + "
-            "kornia>=0.7); automatically activates LightGlue matching."
+            "kornia>=0.7); automatically activates LightGlue matching.  'disk' uses "
+            "kornia's DISK detector with 128-D descriptors; compatible with LightGlue "
+            "and standard FLANN matching."
         ),
     )
     p.add_argument(
@@ -111,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Matching strategy
     p.add_argument(
         "--match_strategy",
-        choices=["exhaustive", "sequential", "vocab_tree"],
+        choices=["exhaustive", "sequential", "vocab_tree", "loftr"],
         default="exhaustive",
         help=(
             "Pairwise matching strategy.  "
@@ -219,6 +221,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--loop-closure",
+        action="store_true",
+        help=(
+            "When the scene graph has multiple disconnected components, "
+            "attempt to bridge them by running DINOv2 or VocabTree retrieval "
+            "between images in different components, re-verifying any found "
+            "pairs, and adding them to the scene graph before reconstruction.  "
+            "Requires either --retrieval dinov2 or --match_strategy vocab_tree."
+        ),
+    )
+    p.add_argument(
+        "--local-ba-window",
+        type=int,
+        default=0,
+        metavar="W",
+        help=(
+            "Enable local bundle adjustment: after each camera registration, "
+            "optimize the last W cameras and their visible 3-D points.  "
+            "W=10 gives 10-50× speedup over global BA on large scenes (>50 images).  "
+            "0 disables local BA (default).  Combined with --ba_interval for global BA."
+        ),
+    )
+    p.add_argument(
         "--track-merge",
         action="store_true",
         help=(
@@ -235,6 +260,27 @@ def build_parser() -> argparse.ArgumentParser:
             "EXIF FocalLengthIn35mmFilm when available (falls back to shared "
             "estimate).  Enables T2-01 per-camera intrinsics in reconstruction.  "
             "Required for --ba-backend pyceres per-camera optimisation."
+        ),
+    )
+    p.add_argument(
+        "--pnp-backend",
+        choices=["cv2", "poselib"],
+        default="cv2",
+        help=(
+            "'cv2' (default) uses cv2.solvePnPRansac with EPnP+LM refinement.  "
+            "'poselib' uses the PoseLib p3p minimal solver (3–5× faster on CPU, "
+            "better numerical stability on near-planar configurations).  "
+            "Requires: pip install poselib"
+        ),
+    )
+    p.add_argument(
+        "--ba-separate-focal",
+        action="store_true",
+        help=(
+            "Optimize separate fx and fy focal lengths in bundle adjustment "
+            "instead of a single shared scalar f.  Useful for anamorphic lenses "
+            "or drone cameras with non-square pixels.  Adds one extra shared "
+            "parameter to the BA problem (negligible cost)."
         ),
     )
     p.add_argument(
@@ -748,10 +794,10 @@ def main(argv=None) -> int:
         return 0
 
     # ── Imports (deferred so --help is instant) ───────────────────────────
-    from sfm.feature_extraction import FeatureExtractor, SuperPointExtractor
+    from sfm.feature_extraction import FeatureExtractor, SuperPointExtractor, DISKExtractor
     from sfm.feature_matching import (
         FeatureMatcher, SequentialMatcher, VocabTreeMatcher, DINOv2Matcher,
-        LightGlueMatcher,
+        LightGlueMatcher, LoFTRMatcher,
     )
     from sfm.geometric_verification import GeometricVerifier
     from sfm.reconstruction import IncrementalSfM
@@ -822,6 +868,8 @@ def main(argv=None) -> int:
         _feat_backend = getattr(args, "feature_backend", "sift")
         if _feat_backend == "superpoint":
             extractor = SuperPointExtractor(n_features=args.n_features)
+        elif _feat_backend == "disk":
+            extractor = DISKExtractor(n_features=args.n_features)
         else:
             extractor = FeatureExtractor(  # type: ignore[call-arg]
                 n_features=args.n_features,
@@ -896,6 +944,10 @@ def main(argv=None) -> int:
                 top_k=args.vocab_top_k,
                 **common_kw,
             ).match_all(features)
+        elif args.match_strategy == "loftr":
+            all_matches = LoFTRMatcher(
+                min_matches=args.min_matches,
+            ).match_all(features)
         else:
             all_matches = FeatureMatcher(**common_kw).match_all(features)
         logger.info(
@@ -965,6 +1017,77 @@ def main(argv=None) -> int:
             "Ensure images have sufficient overlap.",
             len(components[0]),
         )
+
+        # Loop-closure: attempt to bridge disconnected components via retrieval
+        if getattr(args, "loop_closure", False):
+            _lc_backend = getattr(args, "feature_backend", "sift")
+            _lc_retrieval = args.retrieval
+            _lc_strategy  = args.match_strategy
+            if _lc_retrieval == "dinov2" or _lc_strategy == "vocab_tree":
+                logger.info(
+                    "[LOOP CLOSURE] Attempting to bridge %d disconnected components…",
+                    len(components),
+                )
+                # Build cross-component candidate pairs using the retrieval back-end
+                _bridge_pairs: set = set()
+                _comp_lists = [sorted(c) for c in components]
+                for _ci in range(len(_comp_lists)):
+                    for _cj in range(_ci + 1, len(_comp_lists)):
+                        for _a in _comp_lists[_ci]:
+                            for _b in _comp_lists[_cj]:
+                                _bridge_pairs.add(
+                                    (min(_a, _b), max(_a, _b))
+                                )
+                _bridge_pairs -= set(all_matches.keys())  # skip already-matched
+                if _bridge_pairs:
+                    logger.info(
+                        "[LOOP CLOSURE] Matching %d cross-component candidate pairs…",
+                        len(_bridge_pairs),
+                    )
+                    _lc_matcher = _make_flann() if False else None  # import below
+                    import cv2 as _cv2
+                    from sfm.feature_matching import _match_pair_cpu, _make_flann as _mk_flann
+                    _lc_flann = _mk_flann()
+                    _lc_new_matches: dict = {}
+                    for _a, _b in _bridge_pairs:
+                        _m = _match_pair_cpu(
+                            _lc_flann,
+                            features[_a]["descriptors"],
+                            features[_b]["descriptors"],
+                            args.ratio,
+                            cross_check=True,
+                        )
+                        if len(_m) >= args.min_matches:
+                            _lc_new_matches[(_a, _b)] = _m
+                    logger.info(
+                        "[LOOP CLOSURE] %d bridge pairs with ≥%d matches — re-verifying…",
+                        len(_lc_new_matches), args.min_matches,
+                    )
+                    _lc_verified = verifier.verify_all(
+                        features, _lc_new_matches, K, dist_coeffs=dist_coeffs
+                    )
+                    if _lc_verified:
+                        logger.info(
+                            "[LOOP CLOSURE] %d bridge pairs verified — adding to scene graph",
+                            len(_lc_verified),
+                        )
+                        verified.update(_lc_verified)
+                        # Recompute connectivity
+                        components = check_scene_graph_connectivity(
+                            verified, all_img_indices, min_inliers=args.min_inliers
+                        )
+                        logger.info(
+                            "[LOOP CLOSURE] After bridging: %d component(s)",
+                            len(components),
+                        )
+                    else:
+                        logger.warning("[LOOP CLOSURE] No bridge pairs survived verification.")
+            else:
+                logger.warning(
+                    "[LOOP CLOSURE] --loop-closure requires --retrieval dinov2 or "
+                    "--match_strategy vocab_tree to generate cross-component candidates."
+                )
+
         # Filter verified pairs to the largest component only
         largest_set = components[0]
         verified = {
@@ -1004,6 +1127,9 @@ def main(argv=None) -> int:
         merge_tracks=getattr(args, "track_merge", False),
         per_camera_intrinsics=per_cam_intr,
         ba_backend=getattr(args, "ba_backend", "scipy"),
+        local_ba_window=getattr(args, "local_ba_window", 0),
+        ba_separate_focal=getattr(args, "ba_separate_focal", False),
+        pnp_backend=getattr(args, "pnp_backend", "cv2"),
     )
     try:
         cameras, points_3d, observations, kp_to_3d = sfm.reconstruct()

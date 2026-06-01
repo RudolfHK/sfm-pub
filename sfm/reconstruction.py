@@ -37,7 +37,7 @@ from .utils import camera_center, projection_matrix, reprojection_error, undisto
 logger = logging.getLogger(__name__)
 
 # Tuning constants
-_MIN_TRIANGULATION_ANGLE_DEG = 1.0
+_MIN_TRIANGULATION_ANGLE_DEG = 2.0
 _MAX_POINT_DISTANCE_RATIO    = 50.0   # reject pts > ratio × median dist from origin
 
 
@@ -107,8 +107,9 @@ def _accept_batch(
     pts2:   np.ndarray,
     C1:     np.ndarray,   # (3,)
     C2:     np.ndarray,
-    K:      np.ndarray,
+    K1:     np.ndarray,   # intrinsics for camera 1
     max_reproj_err: float,
+    K2:     Optional[np.ndarray] = None,   # intrinsics for camera 2; defaults to K1
 ) -> np.ndarray:
     """
     Vectorised acceptance filter for a batch of triangulated 3-D points.
@@ -122,11 +123,12 @@ def _accept_batch(
     -------
     accept : (M,) bool
     """
+    if K2 is None:
+        K2 = K1
     t1f = t1.flatten()
     t2f = t2.flatten()
-    f   = K[0, 0]
-    cx  = K[0, 2]
-    cy  = K[1, 2]
+    f1, cx1, cy1 = K1[0, 0], K1[0, 2], K1[1, 2]
+    f2, cx2, cy2 = K2[0, 0], K2[0, 2], K2[1, 2]
 
     X_cam1 = (R1 @ X3d.T).T + t1f   # (M, 3)
     X_cam2 = (R2 @ X3d.T).T + t2f
@@ -143,14 +145,14 @@ def _accept_batch(
 
     # Reprojection — camera 1
     z1   = X_cam1[:, 2].clip(min=1e-6)
-    u1   = f * X_cam1[:, 0] / z1 + cx
-    v1   = f * X_cam1[:, 1] / z1 + cy
+    u1   = f1 * X_cam1[:, 0] / z1 + cx1
+    v1   = f1 * X_cam1[:, 1] / z1 + cy1
     err1 = np.hypot(u1 - pts1[:, 0], v1 - pts1[:, 1])
 
     # Reprojection — camera 2
     z2   = X_cam2[:, 2].clip(min=1e-6)
-    u2   = f * X_cam2[:, 0] / z2 + cx
-    v2   = f * X_cam2[:, 1] / z2 + cy
+    u2   = f2 * X_cam2[:, 0] / z2 + cx2
+    v2   = f2 * X_cam2[:, 1] / z2 + cy2
     err2 = np.hypot(u2 - pts2[:, 0], v2 - pts2[:, 1])
 
     reproj_ok = (err1 <= max_reproj_err) & (err2 <= max_reproj_err)
@@ -190,6 +192,9 @@ class IncrementalSfM:
         merge_tracks: bool = False,
         per_camera_intrinsics: Optional[Dict[int, "CameraIntrinsics"]] = None,
         ba_backend: str = "scipy",
+        local_ba_window: int = 0,
+        ba_separate_focal: bool = False,
+        pnp_backend: str = "cv2",
     ) -> None:
         self.features            = features
         self.verified_pairs      = verified_pairs
@@ -201,6 +206,8 @@ class IncrementalSfM:
         self.merge_tracks        = merge_tracks
         self.viz                 = visualizer
         self._ba_step            = 0
+        self._local_ba_window    = local_ba_window
+        self._pnp_backend        = pnp_backend
         # Per-camera intrinsics mode: each image may have its own K
         self._per_cam_intr: Optional[Dict[int, CameraIntrinsics]] = per_camera_intrinsics
 
@@ -244,8 +251,12 @@ class IncrementalSfM:
         if ba_backend == "pyceres":
             self._ba = PyceresBundleAdjuster(fix_principal_point=self.fix_principal_point)
         else:
-            self._ba = BundleAdjuster(fix_principal_point=self.fix_principal_point)
+            self._ba = BundleAdjuster(
+                fix_principal_point=self.fix_principal_point,
+                separate_focal=ba_separate_focal,
+            )
         self._cams_since_ba   = 0
+        self._registration_order: List[int] = []   # for local BA window
 
     # ── public entry point ────────────────────────────────────────────────
 
@@ -305,6 +316,7 @@ class IncrementalSfM:
                 continue
 
             registered.add(img_idx)
+            self._registration_order.append(img_idx)
             n_new = self._triangulate_new_points(img_idx)
             logger.info(
                 f"  ✓ Registered. New 3-D pts: {n_new}, "
@@ -314,6 +326,11 @@ class IncrementalSfM:
                 pts_snap = np.array(self.points_3d, dtype=np.float64) if self.points_3d else np.zeros((0, 3))
                 csnap    = {k: {"R": v["R"].copy(), "t": v["t"].copy()} for k, v in self.cameras.items()}
                 self.viz.on_camera_registered(img_idx, csnap, pts_snap, n_new)
+
+            # Local BA: optimize last W cameras + their visible points after every registration
+            if self._local_ba_window > 0 and len(self._registration_order) >= 2:
+                local_win = self._registration_order[-self._local_ba_window :]
+                self._run_local_ba(local_win)
 
             self._cams_since_ba += 1
             if self._cams_since_ba >= self.ba_interval:
@@ -461,7 +478,7 @@ class IncrementalSfM:
             X3d[vw_idx],
             R_i, t_i, R_j, t_j,
             pts1_ud[vw_idx], pts2_ud[vw_idx],
-            C_i, C_j, K_i, self.max_reproj_err,
+            C_i, C_j, K_i, self.max_reproj_err, K2=K_j,
         )
 
         for k in np.where(accept)[0]:
@@ -511,6 +528,65 @@ class IncrementalSfM:
 
     # ── image registration ────────────────────────────────────────────────
 
+    def _register_poselib(
+        self,
+        pts2d_ud: np.ndarray,
+        pts3d: np.ndarray,
+        K: np.ndarray,
+    ):
+        """PnP via PoseLib p3p RANSAC; returns (R, t, inlier_indices) or (None, None, None)."""
+        try:
+            import poselib
+        except ImportError:
+            logger.warning(
+                "poselib not installed — falling back to cv2.solvePnPRansac.  "
+                "Install with: pip install poselib"
+            )
+            _no_dist = np.zeros(4, dtype=np.float64)
+            ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+                pts3d.reshape(-1, 1, 3),
+                pts2d_ud.reshape(-1, 1, 2),
+                K,
+                _no_dist,
+                confidence=0.999,
+                reprojectionError=self.max_reproj_err,
+                iterationsCount=1000,
+                flags=cv2.SOLVEPNP_EPNP,
+            )
+            if not ok or inliers is None or len(inliers) < 6:
+                return None, None, None
+            R, _ = cv2.Rodrigues(rvec)
+            return R, tvec.reshape(3, 1), inliers
+
+        camera = {
+            "model":  "PINHOLE",
+            "width":  0,
+            "height": 0,
+            "params": [float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])],
+        }
+        ransac_opts = poselib.RansacOptions()
+        ransac_opts.max_reproj_error = self.max_reproj_err
+
+        try:
+            pose, info = poselib.estimate_absolute_pose(
+                pts2d_ud.astype(np.float64),
+                pts3d.astype(np.float64),
+                camera,
+                ransac_options=ransac_opts,
+            )
+        except Exception as exc:
+            logger.debug(f"PoseLib p3p failed ({exc})")
+            return None, None, None
+
+        inliers_mask = np.array(info.get("inliers", []), dtype=bool)
+        if inliers_mask.sum() < 6:
+            return None, None, None
+
+        R = np.array(pose.R, dtype=np.float64)
+        t = np.array(pose.t, dtype=np.float64).reshape(3, 1)
+        inlier_indices = np.where(inliers_mask)[0].reshape(-1, 1).astype(np.int32)
+        return R, t, inlier_indices
+
     def _register_image(self, img_idx: int) -> bool:
         # PnP uses undistorted 2D points with the camera matrix (no dist needed)
         pts2d_ud, pts3d, kp_idxs, pt3d_idxs = self._get_corr(img_idx)
@@ -523,41 +599,46 @@ class IncrementalSfM:
         # does not apply distortion correction a second time (W-02 fix).
         _no_dist = np.zeros(4, dtype=np.float64)
 
-        ok, rvec, tvec, inliers = cv2.solvePnPRansac(
-            pts3d.reshape(-1, 1, 3),
-            pts2d_ud.reshape(-1, 1, 2),
-            K_i,
-            _no_dist,
-            confidence=0.999,
-            reprojectionError=self.max_reproj_err,
-            iterationsCount=1000,
-            flags=cv2.SOLVEPNP_EPNP,
-        )
-        if not ok or inliers is None or len(inliers) < 6:
-            return False
-
-        # LM refinement from EPnP initial estimate (~0.5 px improvement at <1 ms cost)
-        inlier_pts3d = pts3d[inliers.flatten()]
-        inlier_pts2d = pts2d_ud[inliers.flatten()]
-        try:
-            rvec, tvec = cv2.solvePnPRefineLM(
-                inlier_pts3d.reshape(-1, 1, 3),
-                inlier_pts2d.reshape(-1, 1, 2),
+        if self._pnp_backend == "poselib":
+            R, t, inliers = self._register_poselib(pts2d_ud, pts3d, K_i)
+            if R is None:
+                return False
+        else:
+            ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+                pts3d.reshape(-1, 1, 3),
+                pts2d_ud.reshape(-1, 1, 2),
                 K_i,
-                _no_dist,   # points are pre-undistorted
-                rvec,
-                tvec,
-                criteria=(
-                    cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-                    20,
-                    1e-6,
-                ),
+                _no_dist,
+                confidence=0.999,
+                reprojectionError=self.max_reproj_err,
+                iterationsCount=1000,
+                flags=cv2.SOLVEPNP_EPNP,
             )
-        except cv2.error:
-            pass  # fall back to EPnP result if refinement fails
+            if not ok or inliers is None or len(inliers) < 6:
+                return False
 
-        R, _ = cv2.Rodrigues(rvec)
-        t    = tvec.reshape(3, 1)
+            # LM refinement from EPnP initial estimate (~0.5 px improvement at <1 ms cost)
+            inlier_pts3d = pts3d[inliers.flatten()]
+            inlier_pts2d = pts2d_ud[inliers.flatten()]
+            try:
+                rvec, tvec = cv2.solvePnPRefineLM(
+                    inlier_pts3d.reshape(-1, 1, 3),
+                    inlier_pts2d.reshape(-1, 1, 2),
+                    K_i,
+                    _no_dist,   # points are pre-undistorted
+                    rvec,
+                    tvec,
+                    criteria=(
+                        cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+                        20,
+                        1e-6,
+                    ),
+                )
+            except cv2.error:
+                pass  # fall back to EPnP result if refinement fails
+
+            R, _ = cv2.Rodrigues(rvec)
+            t    = tvec.reshape(3, 1)
 
         # Reject wildly placed cameras (> 100× median scene extent)
         if self.cameras:
@@ -707,7 +788,7 @@ class IncrementalSfM:
                 X3d[vw_idx],
                 R_n, t_n, R_o, t_o,
                 pts_n[vw_idx], pts_o[vw_idx],
-                C_n, C_o, K_n, self.max_reproj_err,
+                C_n, C_o, K_n, self.max_reproj_err, K2=K_o,
             )
 
             for k in np.where(accept)[0]:
@@ -904,6 +985,53 @@ class IncrementalSfM:
 
     # ── bundle adjustment wrapper ─────────────────────────────────────────
 
+    def _run_local_ba(self, local_cam_idxs: List[int]) -> None:
+        """
+        Run BA over a sliding window of recently-registered cameras plus all
+        3-D points visible from any of those cameras.
+
+        Only the local cameras' poses are extracted from the result; all 3-D
+        points in the window's field of view are updated.  Non-local cameras
+        are left unchanged.  This O(W²·P_local) call is 10-50× cheaper than
+        global BA for large scenes.
+        """
+        local_set = {idx for idx in local_cam_idxs if idx in self.cameras}
+        if len(local_set) < 2:
+            return
+
+        local_cams = {idx: self.cameras[idx] for idx in local_set}
+        pts_arr    = np.array(self.points_3d, dtype=np.float64)
+        local_obs  = [
+            (img, pt, x, y)
+            for img, pt, x, y in self.observations
+            if img in local_set and pt < len(pts_arr)
+        ]
+        if len(local_obs) < 8:
+            return
+
+        updated_cams, updated_pts, K_ref, dist_ref = self._ba.adjust(
+            local_cams, pts_arr, local_obs, self.K,
+            dist_coeffs=self.dist_coeffs,
+            refine_intrinsics=self.refine_intrinsics,
+        )
+
+        for idx in local_set:
+            if idx in updated_cams:
+                self.cameras[idx] = updated_cams[idx]
+
+        self.points_3d = [updated_pts[i] for i in range(len(updated_pts))]
+
+        if K_ref is not None:
+            self.K = K_ref
+            self.dist_coeffs = dist_ref
+            if self._per_cam_intr is not None:
+                k1_new = float(dist_ref[0]) if len(dist_ref) > 0 else 0.0
+                k2_new = float(dist_ref[1]) if len(dist_ref) > 1 else 0.0
+                for img_idx in self._per_cam_intr:
+                    self._per_cam_intr[img_idx] = (
+                        self._per_cam_intr[img_idx].update_from_ba(k1=k1_new, k2=k2_new)
+                    )
+
     def _run_ba(self) -> None:
         if len(self.cameras) < 2 or len(self.points_3d) < 10:
             return
@@ -1007,7 +1135,7 @@ class IncrementalSfM:
                 X3d[vw_idx],
                 R_i, t_i, R_j, t_j,
                 pts1_ud[vw_idx], pts2_ud[vw_idx],
-                C_i, C_j, K_i, self.max_reproj_err,
+                C_i, C_j, K_i, self.max_reproj_err, K2=K_j,
             )
 
             for k in np.where(accept)[0]:

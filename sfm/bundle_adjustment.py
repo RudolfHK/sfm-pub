@@ -4,7 +4,7 @@ Bundle Adjustment (BA) via sparse Levenberg-Marquardt.
 Minimises the sum of squared reprojection errors over all cameras and 3-D
 points jointly, with a robust Huber loss to down-weight outliers.
 
-Parameter vector layout
+Parameter vector layout  (separate_focal=False, the default)
 -----------------------
   refine_intrinsics=True, fix_principal_point=False (default):
     [ f(1)  k1(1)  k2(1)  cx(1)  cy(1) |
@@ -25,6 +25,16 @@ Parameter vector layout
 
     Total length = 6*C + 3*P        (N_SHARED = 0)
 
+Parameter vector layout  (separate_focal=True — --ba-separate-focal)
+-----------------------
+  refine_intrinsics=True, fix_principal_point=False:
+    [ fx(1)  fy(1)  k1(1)  k2(1)  cx(1)  cy(1) | cameras | points ]
+    Total length = 6 + 6*C + 3*P   (N_SHARED = 6)
+
+  refine_intrinsics=True, fix_principal_point=True:
+    [ fx(1)  fy(1)  k1(1)  k2(1) | cameras | points ]
+    Total length = 4 + 6*C + 3*P   (N_SHARED = 4)
+
 Projection model
 ----------------
   Radial distortion (Brown–Conrady, 2 coefficients):
@@ -32,8 +42,8 @@ Projection model
     X_cam = R * X_world + t
     xn = X_cam[0] / X_cam[2],  yn = X_cam[1] / X_cam[2]
     r² = xn² + yn²
-    u  = f * xn * (1 + k1*r² + k2*r⁴) + cx
-    v  = f * yn * (1 + k1*r² + k2*r⁴) + cy
+    u  = fx * xn * (1 + k1*r² + k2*r⁴) + cx
+    v  = fy * yn * (1 + k1*r² + k2*r⁴) + cy
 
   When fix_principal_point=False, cx and cy are optimized (default).
   When k1 = k2 = 0 this reduces to the standard pinhole model.
@@ -92,11 +102,12 @@ def _rodrigues_rotate_batch(rvecs: np.ndarray, pts: np.ndarray) -> np.ndarray:
 def _project_distorted(
     cam_params: np.ndarray,
     pts_3d: np.ndarray,
-    f: float,
+    fx: float,
     k1: float,
     k2: float,
     cx: float,
     cy: float,
+    fy: Optional[float] = None,
 ) -> np.ndarray:
     """
     Project N 3-D points through N cameras with radial distortion.
@@ -105,13 +116,16 @@ def _project_distorted(
     ----------
     cam_params : (N, 6)  [rvec(3) | tvec(3)] per observation
     pts_3d     : (N, 3)
-    f, k1, k2  : shared intrinsics (single focal; k1/k2 Brown–Conrady)
+    fx, k1, k2 : shared intrinsics (fx used for both axes when fy is None)
     cx, cy     : fixed principal point
+    fy         : separate vertical focal; defaults to fx (square-pixel model)
 
     Returns
     -------
     projected : (N, 2)
     """
+    if fy is None:
+        fy = fx
     rvecs = cam_params[:, :3]
     tvecs = cam_params[:, 3:6]
 
@@ -124,8 +138,8 @@ def _project_distorted(
     r2 = xn ** 2 + yn ** 2
     dist_factor = 1.0 + k1 * r2 + k2 * r2 ** 2
 
-    u = f * xn * dist_factor + cx
-    v = f * yn * dist_factor + cy
+    u = fx * xn * dist_factor + cx
+    v = fy * yn * dist_factor + cy
 
     return np.stack([u, v], axis=1)                          # (N,2)
 
@@ -146,17 +160,31 @@ def _residuals_v2(
     f_fixed: float,
     k1_fixed: float,
     k2_fixed: float,
+    separate_focal: bool = False,
+    fy_fixed: float = 0.0,
 ) -> np.ndarray:
     if refine_intrinsics:
-        f, k1, k2 = params[0], params[1], params[2]
-        if fix_principal_point:
-            cx, cy = cx_fixed, cy_fixed
-            off = 3
+        if separate_focal:
+            fx, fy, k1, k2 = params[0], params[1], params[2], params[3]
+            if fix_principal_point:
+                cx, cy = cx_fixed, cy_fixed
+                off = 4
+            else:
+                cx, cy = params[4], params[5]
+                off = 6
         else:
-            cx, cy = params[3], params[4]
-            off = 5
+            fx, k1, k2 = params[0], params[1], params[2]
+            fy = fx
+            if fix_principal_point:
+                cx, cy = cx_fixed, cy_fixed
+                off = 3
+            else:
+                cx, cy = params[3], params[4]
+                off = 5
     else:
-        f, k1, k2 = f_fixed, k1_fixed, k2_fixed
+        fx  = f_fixed
+        fy  = fy_fixed if (separate_focal and fy_fixed != 0.0) else f_fixed
+        k1, k2 = k1_fixed, k2_fixed
         cx, cy = cx_fixed, cy_fixed
         off = 0
 
@@ -166,7 +194,7 @@ def _residuals_v2(
     obs_cam = cam_params[cam_indices]
     obs_pts = pts3d[pt_indices]
 
-    projected = _project_distorted(obs_cam, obs_pts, f, k1, k2, cx, cy)
+    projected = _project_distorted(obs_cam, obs_pts, fx, k1, k2, cx, cy, fy=fy)
     return (projected - pts_2d).ravel()
 
 
@@ -179,10 +207,14 @@ def _build_sparsity_v2(
     pt_indices: np.ndarray,
     refine_intrinsics: bool,
     fix_principal_point: bool = True,
+    separate_focal: bool = False,
 ) -> "csr_matrix":
     n_obs    = len(cam_indices)
     if refine_intrinsics:
-        n_shared = 3 if fix_principal_point else 5
+        if separate_focal:
+            n_shared = 4 if fix_principal_point else 6
+        else:
+            n_shared = 3 if fix_principal_point else 5
     else:
         n_shared = 0
     n_params = n_shared + n_cameras * 6 + n_points * 3
@@ -246,6 +278,7 @@ class BundleAdjuster:
         loss: str = "huber",
         f_scale: float = 2.0,
         fix_principal_point: bool = False,
+        separate_focal: bool = False,
     ) -> None:
         self.max_nfev            = max_nfev
         self.ftol                = ftol
@@ -254,6 +287,7 @@ class BundleAdjuster:
         self.loss                = loss
         self.f_scale             = f_scale
         self.fix_principal_point = fix_principal_point
+        self.separate_focal      = separate_focal
 
     def adjust(
         self,
@@ -294,12 +328,16 @@ class BundleAdjuster:
         k1_init = float(dist_coeffs[0]) if len(dist_coeffs) > 0 else 0.0
         k2_init = float(dist_coeffs[1]) if len(dist_coeffs) > 1 else 0.0
 
-        cx_init = float(K[0, 2])
-        cy_init = float(K[1, 2])
-        f_init  = float(K[0, 0])
+        cx_init  = float(K[0, 2])
+        cy_init  = float(K[1, 2])
+        fx_init  = float(K[0, 0])
+        fy_init  = float(K[1, 1])
+        f_init   = fx_init   # backward compat alias
         # Convenience alias — used as fixed values when fix_principal_point=True
         cx = cx_init
         cy = cy_init
+
+        sep_f = self.separate_focal
 
         # Build consecutive index maps
         cam_list   = sorted(cameras.keys())
@@ -329,35 +367,60 @@ class BundleAdjuster:
 
         fix_pp = self.fix_principal_point
         if refine_intrinsics:
-            if fix_pp:
-                x0 = np.concatenate([
-                    [f_init, k1_init, k2_init],
-                    cam_params_init.ravel(),
-                    points_3d.ravel(),
-                ])
-                lb = np.full_like(x0, -np.inf)
-                ub = np.full_like(x0,  np.inf)
-                lb[0] = 0.5 * f_init;  ub[0] = 2.0 * f_init
-                lb[1] = -2.0;          ub[1] = 2.0
-                lb[2] = -2.0;          ub[2] = 2.0
+            lb = None
+            if sep_f:
+                if fix_pp:
+                    x0 = np.concatenate([
+                        [fx_init, fy_init, k1_init, k2_init],
+                        cam_params_init.ravel(), points_3d.ravel(),
+                    ])
+                    lb = np.full_like(x0, -np.inf); ub = np.full_like(x0, np.inf)
+                    for _i, _v in enumerate([fx_init, fy_init]):
+                        lb[_i] = 0.5 * _v; ub[_i] = 2.0 * _v
+                    lb[2] = -2.0; ub[2] = 2.0
+                    lb[3] = -2.0; ub[3] = 2.0
+                else:
+                    x0 = np.concatenate([
+                        [fx_init, fy_init, k1_init, k2_init, cx_init, cy_init],
+                        cam_params_init.ravel(), points_3d.ravel(),
+                    ])
+                    lb = np.full_like(x0, -np.inf); ub = np.full_like(x0, np.inf)
+                    for _i, _v in enumerate([fx_init, fy_init]):
+                        lb[_i] = 0.5 * _v; ub[_i] = 2.0 * _v
+                    lb[2] = -2.0; ub[2] = 2.0; lb[3] = -2.0; ub[3] = 2.0
+                    _w = cx_init * 2.0; _h = cy_init * 2.0
+                    lb[4] = cx_init - 0.1*_w; ub[4] = cx_init + 0.1*_w
+                    lb[5] = cy_init - 0.1*_h; ub[5] = cy_init + 0.1*_h
             else:
-                # Include cx, cy in optimized params (indices 3 and 4)
-                x0 = np.concatenate([
-                    [f_init, k1_init, k2_init, cx_init, cy_init],
-                    cam_params_init.ravel(),
-                    points_3d.ravel(),
-                ])
-                # Bounds: cx/cy within ±10% of image dimensions from initial
-                lb = np.full_like(x0, -np.inf)
-                ub = np.full_like(x0,  np.inf)
-                lb[0] = 0.5 * f_init;  ub[0] = 2.0 * f_init
-                lb[1] = -2.0;          ub[1] = 2.0
-                lb[2] = -2.0;          ub[2] = 2.0
-                # Infer image dims from initial principal point (cx ≈ W/2, cy ≈ H/2)
-                _w = cx_init * 2.0
-                _h = cy_init * 2.0
-                lb[3] = cx_init - 0.1 * _w;  ub[3] = cx_init + 0.1 * _w
-                lb[4] = cy_init - 0.1 * _h;  ub[4] = cy_init + 0.1 * _h
+                if fix_pp:
+                    x0 = np.concatenate([
+                        [fx_init, k1_init, k2_init],
+                        cam_params_init.ravel(),
+                        points_3d.ravel(),
+                    ])
+                    lb = np.full_like(x0, -np.inf)
+                    ub = np.full_like(x0,  np.inf)
+                    lb[0] = 0.5 * fx_init;  ub[0] = 2.0 * fx_init
+                    lb[1] = -2.0;           ub[1] = 2.0
+                    lb[2] = -2.0;           ub[2] = 2.0
+                else:
+                    # Include cx, cy in optimized params (indices 3 and 4)
+                    x0 = np.concatenate([
+                        [fx_init, k1_init, k2_init, cx_init, cy_init],
+                        cam_params_init.ravel(),
+                        points_3d.ravel(),
+                    ])
+                    # Bounds: cx/cy within ±10% of image dimensions from initial
+                    lb = np.full_like(x0, -np.inf)
+                    ub = np.full_like(x0,  np.inf)
+                    lb[0] = 0.5 * fx_init;  ub[0] = 2.0 * fx_init
+                    lb[1] = -2.0;           ub[1] = 2.0
+                    lb[2] = -2.0;           ub[2] = 2.0
+                    # Infer image dims from initial principal point (cx ≈ W/2, cy ≈ H/2)
+                    _w = cx_init * 2.0
+                    _h = cy_init * 2.0
+                    lb[3] = cx_init - 0.1 * _w;  ub[3] = cx_init + 0.1 * _w
+                    lb[4] = cy_init - 0.1 * _h;  ub[4] = cy_init + 0.1 * _h
             bounds = (lb, ub)
         else:
             x0 = np.concatenate([cam_params_init.ravel(), points_3d.ravel()])
@@ -366,7 +429,8 @@ class BundleAdjuster:
         def fun(params):
             return _residuals_v2(
                 params, n_cameras, n_points, cam_indices, pt_indices, pts_2d,
-                cx_init, cy_init, refine_intrinsics, fix_pp, f_init, k1_init, k2_init,
+                cx_init, cy_init, refine_intrinsics, fix_pp, fx_init, k1_init, k2_init,
+                separate_focal=sep_f, fy_fixed=fy_init,
             )
 
         res_init  = fun(x0)
@@ -391,7 +455,7 @@ class BundleAdjuster:
 
         J_sparse = _build_sparsity_v2(
             n_cameras, n_points, cam_indices, pt_indices,
-            refine_intrinsics, fix_pp,
+            refine_intrinsics, fix_pp, separate_focal=sep_f,
         )
 
         try:
@@ -432,17 +496,29 @@ class BundleAdjuster:
         # Unpack optimised parameters
         opt = result.x
         if refine_intrinsics:
-            f_opt, k1_opt, k2_opt = opt[0], opt[1], opt[2]
-            if fix_pp:
-                cx_opt, cy_opt = cx_init, cy_init
-                off = 3
+            if sep_f:
+                fx_opt, fy_opt, k1_opt, k2_opt = opt[0], opt[1], opt[2], opt[3]
+                if fix_pp:
+                    cx_opt, cy_opt = cx_init, cy_init
+                    off = 4
+                else:
+                    cx_opt, cy_opt = opt[4], opt[5]
+                    off = 6
             else:
-                cx_opt, cy_opt = opt[3], opt[4]
-                off = 5
+                fx_opt = opt[0]; fy_opt = fx_opt
+                k1_opt, k2_opt = opt[1], opt[2]
+                if fix_pp:
+                    cx_opt, cy_opt = cx_init, cy_init
+                    off = 3
+                else:
+                    cx_opt, cy_opt = opt[3], opt[4]
+                    off = 5
         else:
-            f_opt, k1_opt, k2_opt = f_init, k1_init, k2_init
+            fx_opt, fy_opt = fx_init, fy_init
+            k1_opt, k2_opt = k1_init, k2_init
             cx_opt, cy_opt = cx_init, cy_init
             off = 0
+        f_opt = fx_opt   # backward compat
 
         opt_cam = opt[off : off + n_cameras * 6].reshape(n_cameras, 6)
         opt_pts = opt[off + n_cameras * 6 :].reshape(n_points, 3)
@@ -472,22 +548,31 @@ class BundleAdjuster:
         dist_refined = None
         if refine_intrinsics:
             K_refined = K.copy()
-            K_refined[0, 0] = f_opt
-            K_refined[1, 1] = f_opt
+            K_refined[0, 0] = fx_opt
+            K_refined[1, 1] = fy_opt
             K_refined[0, 2] = cx_opt
             K_refined[1, 2] = cy_opt
             dist_out = np.zeros(max(len(dist_coeffs), 4), dtype=np.float64)
             dist_out[0] = k1_opt
             dist_out[1] = k2_opt
             dist_refined = dist_out
-            if fix_pp:
+            if sep_f:
                 logger.info(
-                    f"  BA refined: f={f_opt:.1f} (Δ{f_opt - f_init:+.2f})  "
+                    f"  BA refined: fx={fx_opt:.1f} (Δ{fx_opt-fx_init:+.2f})  "
+                    f"fy={fy_opt:.1f} (Δ{fy_opt-fy_init:+.2f})  "
+                    f"k1={k1_opt:.5f}  k2={k2_opt:.5f}"
+                    + ("  cx/cy fixed" if fix_pp else
+                       f"  cx={cx_opt:.1f} (Δ{cx_opt-cx_init:+.2f})  "
+                       f"cy={cy_opt:.1f} (Δ{cy_opt-cy_init:+.2f})")
+                )
+            elif fix_pp:
+                logger.info(
+                    f"  BA refined: f={fx_opt:.1f} (Δ{fx_opt - fx_init:+.2f})  "
                     f"k1={k1_opt:.5f}  k2={k2_opt:.5f}  cx/cy fixed"
                 )
             else:
                 logger.info(
-                    f"  BA refined: f={f_opt:.1f} (Δ{f_opt - f_init:+.2f})  "
+                    f"  BA refined: f={fx_opt:.1f} (Δ{fx_opt - fx_init:+.2f})  "
                     f"k1={k1_opt:.5f}  k2={k2_opt:.5f}  "
                     f"cx={cx_opt:.1f} (Δ{cx_opt - cx_init:+.2f})  "
                     f"cy={cy_opt:.1f} (Δ{cy_opt - cy_init:+.2f})"

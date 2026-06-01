@@ -93,8 +93,17 @@ def postprocess_mesh(
             pcd_colors = np.asarray(pcd.colors)       # (P, 3) float64 [0, 1]
 
             tree = cKDTree(pcd_pts)
-            _, indices = tree.query(vertices, k=1, workers=-1)
-            vertex_colors = pcd_colors[indices]       # (V, 3) — no Python loop
+            k_nn = min(5, len(pcd_pts))
+            dists, indices = tree.query(vertices, k=k_nn, workers=-1)
+            if k_nn == 1:
+                vertex_colors = pcd_colors[indices]
+            else:
+                # inverse-distance weighting; guard against zero-distance hits
+                weights = 1.0 / np.maximum(dists, 1e-10)   # (V, k)
+                weights /= weights.sum(axis=1, keepdims=True)
+                vertex_colors = np.einsum(
+                    "vk,vkc->vc", weights, pcd_colors[indices]
+                )                                           # (V, 3)
 
             mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
             logger.info(
