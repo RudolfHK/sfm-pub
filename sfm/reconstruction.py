@@ -519,13 +519,15 @@ class IncrementalSfM:
             return False
 
         K_i  = self._get_K(img_idx)
-        d_i  = self._get_dist(img_idx)
+        # pts2d_ud are already undistorted; pass zero dist to PnP so OpenCV
+        # does not apply distortion correction a second time (W-02 fix).
+        _no_dist = np.zeros(4, dtype=np.float64)
 
         ok, rvec, tvec, inliers = cv2.solvePnPRansac(
             pts3d.reshape(-1, 1, 3),
             pts2d_ud.reshape(-1, 1, 2),
             K_i,
-            d_i,
+            _no_dist,
             confidence=0.999,
             reprojectionError=self.max_reproj_err,
             iterationsCount=1000,
@@ -542,7 +544,7 @@ class IncrementalSfM:
                 inlier_pts3d.reshape(-1, 1, 3),
                 inlier_pts2d.reshape(-1, 1, 2),
                 K_i,
-                d_i,
+                _no_dist,   # points are pre-undistorted
                 rvec,
                 tvec,
                 criteria=(
@@ -930,11 +932,20 @@ class IncrementalSfM:
         if K_ref is not None:
             self.K = K_ref
             self.dist_coeffs = dist_ref
+            # Propagate refined k1/k2 into per-camera intrinsics so subsequent
+            # _get_dist() calls return the updated distortion (W-03 fix).
+            if self._per_cam_intr is not None:
+                k1_new = float(dist_ref[0]) if len(dist_ref) > 0 else 0.0
+                k2_new = float(dist_ref[1]) if len(dist_ref) > 1 else 0.0
+                for img_idx in self._per_cam_intr:
+                    self._per_cam_intr[img_idx] = (
+                        self._per_cam_intr[img_idx].update_from_ba(k1=k1_new, k2=k2_new)
+                    )
             if np.any(dist_ref != 0):
                 for img_idx in self.features:
                     kps = self.features[img_idx]["keypoints"].astype(np.float64)
                     self._undist_kps[img_idx] = undistort_points(
-                        kps, self.K, self.dist_coeffs
+                        kps, self._get_K(img_idx), self._get_dist(img_idx)
                     )
 
         self._retriangulate_after_ba()

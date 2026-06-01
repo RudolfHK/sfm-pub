@@ -40,11 +40,24 @@ def list_images(image_dir: str) -> list:
 
 
 def load_image(path) -> np.ndarray:
-    """Load image as BGR uint8 array."""
-    img = cv2.imread(str(path))
-    if img is None:
-        raise IOError(f"Could not read image: {path}")
-    return img
+    """Load image as BGR uint8 array, applying EXIF orientation when present.
+
+    cv2.imread ignores the EXIF orientation tag on most platforms, causing
+    portrait-mode mobile images to load sideways.  We use PIL + exif_transpose
+    (Pillow is already a required dependency) and fall back to cv2.imread when
+    PIL cannot open the file.
+    """
+    try:
+        from PIL import Image as _PIL, ImageOps as _IOP
+        with _PIL.open(str(path)) as pil_img:
+            pil_img = _IOP.exif_transpose(pil_img)
+            rgb = np.array(pil_img.convert("RGB"), dtype=np.uint8)
+        return rgb[:, :, ::-1].copy()   # RGB → BGR
+    except Exception:
+        img = cv2.imread(str(path))
+        if img is None:
+            raise IOError(f"Could not read image: {path}")
+        return img
 
 
 # ─── EXIF reading ─────────────────────────────────────────────────────────────

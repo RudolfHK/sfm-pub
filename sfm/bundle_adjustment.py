@@ -645,8 +645,9 @@ class PyceresBundleAdjuster:
               else None
 
             if cost is None:
-                # Fallback: add trivial residual (pyceres API varies by version)
-                break
+                # SnavelyReprojectionErrorWithQuaternions unavailable in this
+                # pyceres build — skip this observation, do not abort the loop.
+                continue
 
             problem.add_residual_block(
                 cost, loss_fn,
