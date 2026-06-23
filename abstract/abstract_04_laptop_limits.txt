@@ -1,0 +1,68 @@
+================================================================================
+ABSTRACT 4 — RESSOURCEN / PRAKTISCH-EHRLICHER FOKUS  (empfohlen!)
+Titel: 3D aus dem Laptop: Photogrammetrie mit reinen Python-Mitteln —
+       Möglichkeiten, Grenzen und was man dabei lernt
+================================================================================
+
+Autorschaft:
+Rudolf Hoffmann
+HTW Berlin – Hochschule für Technik und Wirtschaft Berlin
+Fachbereich Ingenieurinformatik
+
+--------------------------------------------------------------------------------
+ABSTRACT
+--------------------------------------------------------------------------------
+
+Was ist möglich, wenn man eine vollständige Photogrammetrie-Pipeline von Grund
+auf in Python implementiert — ohne spezialisierte Hardware, ohne kommerzielle
+Bibliotheken, auf einem handelsüblichen Laptop? Dieser Frage geht der Beitrag
+anhand eines studentischen Implementierungsprojekts nach.
+
+Die entwickelte Pipeline verarbeitet eine geordnete Bildsequenz in mehreren
+Stufen: Detektion lokaler Merkmale (SIFT, optional DISK), paarweises Matching
+(FLANN, optional LightGlue), robuste geometrische Verifikation (USAC-MAGSAC,
+Fundamental­matrix, Homographie-Degenerat-Erkennung), inkrementelle Kamera-
+rekonstruktion (PnP, Triangulation) sowie Bundle Adjustment zur Optimierung
+aller Kameraposen und 3D-Punkte. Optional werden Tiefenkarten (SGBM) und
+eine Mesh-Oberfläche (Poisson-Rekonstruktion) erzeugt.
+
+Im Vortrag werden erzielte Ergebnisse auf realen Datensätzen gezeigt und mit
+COLMAP — dem aktuellen Stand der Technik — verglichen. Dabei werden nicht nur
+die Erfolge präsentiert, sondern auch die Grenzen ehrlich benannt: Wo versagt
+globales Bundle Adjustment bei mehr als ~50 Bildern? Warum bricht die Pipeline
+bei planar-dominanten Szenen zusammen? Wann ist COLMAP schlicht unersetzbar?
+
+Der Beitrag richtet sich an alle, die verstehen wollen, wie 3D-Rekonstruktion
+aus Fotos funktioniert — und was es bedeutet, sie selbst zu implementieren.
+Neben den technischen Erkenntnissen werden Learnings aus dem Entwicklungsprozess
+geteilt: Von unterschätzter Parameterempfindlichkeit über Debugging geometrischer
+Algorithmen bis hin zu der Frage, wann es sinnvoller ist, auf bestehende
+Werkzeuge zu setzen als neu zu bauen.
+
+Schlagwörter: Structure-from-Motion, Photogrammetrie, Python, Laptop, COLMAP,
+              Punktwolke, Bundle Adjustment, Studierendenprojekt, Grenzen
+
+--------------------------------------------------------------------------------
+WARUM DIESER ABSTRACT EMPFOHLEN WIRD
+--------------------------------------------------------------------------------
++ Passt am besten zu den Notizen: "was ist mit Python ohne große Ressourcen
+  auf einem Laptop möglich", "Vergleich mit COLMAP", "Limitationen und Learnings"
++ Ehrlicher Ton → glaubwürdig und authentisch für ein Studentenprojekt
++ Gibt dem Vortrag eine klare Dramaturgie: Aufbau → Demo → Vergleich → Grenzen
++ 15 Minuten gut füllbar: je ~3 min pro Stufe + 2 min Vergleich + 2 min Learnings
+
+MÖGLICHE STRUKTUR DES VORTRAGS (15 min)
+  1. Was ist SfM, warum interessant?                           (~2 min)
+  2. Überblick Pipeline-Architektur (Diagramm)                 (~2 min)
+  3. Live/Video: Pipeline auf einem echten Objekt durchlaufen  (~3 min)
+  4. Vergleich: eigene Pipeline vs. COLMAP (Tabelle + Bilder)  (~4 min)
+  5. Limitationen — wo und warum es scheitert                  (~2 min)
+  6. Learnings & Fazit                                         (~2 min)
+
+NOCH OFFENE PUNKTE (vor dem Vortrag umzusetzen)
+  - COLMAP-Integration für direkten Vergleich (run_sfm.py --backend colmap
+    existiert bereits als Stub in sfm/colmap_backend.py)
+  - Testdatensatz mit Ground Truth wählen (z.B. ETH3D, Tanks-and-Temples,
+    oder eigene Aufnahmen eines bekannten Objekts)
+  - Laufzeit-Messung und Punktanzahl-Vergleich dokumentieren
+================================================================================
