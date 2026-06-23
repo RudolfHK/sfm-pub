@@ -1,13 +1,13 @@
 ================================================================================
-ABSTRACT 4 — RESSOURCEN / PRAKTISCH-EHRLICHER FOKUS  (empfohlen!)
-Titel: 3D aus dem Laptop: Photogrammetrie mit reinen Python-Mitteln —
-       Möglichkeiten, Grenzen und was man dabei lernt
+ABSTRACT (finale Version, angepasst nach Feedback)
 ================================================================================
 
-Autorschaft:
+Titel: 3D auf dem Laptop: Photogrammetrie mit reinen Python-Mitteln —
+       Möglichkeiten, Grenzen und Learnings
+
 Rudolf Hoffmann
 HTW Berlin – Hochschule für Technik und Wirtschaft Berlin
-Fachbereich Ingenieurinformatik
+Fachbereich 2 – Informatik in Ingenieurwissenschaften
 
 --------------------------------------------------------------------------------
 ABSTRACT
@@ -18,51 +18,67 @@ auf in Python implementiert — ohne spezialisierte Hardware, ohne kommerzielle
 Bibliotheken, auf einem handelsüblichen Laptop? Dieser Frage geht der Beitrag
 anhand eines studentischen Implementierungsprojekts nach.
 
-Die entwickelte Pipeline verarbeitet eine geordnete Bildsequenz in mehreren
-Stufen: Detektion lokaler Merkmale (SIFT, optional DISK), paarweises Matching
-(FLANN, optional LightGlue), robuste geometrische Verifikation (USAC-MAGSAC,
-Fundamental­matrix, Homographie-Degenerat-Erkennung), inkrementelle Kamera-
-rekonstruktion (PnP, Triangulation) sowie Bundle Adjustment zur Optimierung
-aller Kameraposen und 3D-Punkte. Optional werden Tiefenkarten (SGBM) und
-eine Mesh-Oberfläche (Poisson-Rekonstruktion) erzeugt.
+Die entwickelte Pipeline verarbeitet eine Bildsequenz in mehreren Stufen:
+Detektion lokaler Merkmale (SIFT), paarweises Matching (FLANN), robuste
+geometrische Verifikation, inkrementelle Kamerarekonstruktion (PnP,
+Triangulation) sowie Bundle Adjustment zur Optimierung aller Kameraposen und
+3D-Punkte. Optional werden Tiefenkarten (SGBM) und eine Mesh-Oberfläche
+(Poisson-Rekonstruktion) erzeugt. Ein zentrales Ziel des Vortrags ist es,
+jeden dieser Schritte anhand von Zwischenergebnissen und Visualisierungen
+greifbar zu machen — von erkannten Bildmerkmalen über übereinstimmende
+Punktpaare bis hin zur schrittweise wachsenden 3D-Punktwolke.
 
 Im Vortrag werden erzielte Ergebnisse auf realen Datensätzen gezeigt und mit
-COLMAP — dem aktuellen Stand der Technik — verglichen. Dabei werden nicht nur
-die Erfolge präsentiert, sondern auch die Grenzen ehrlich benannt: Wo versagt
-globales Bundle Adjustment bei mehr als ~50 Bildern? Warum bricht die Pipeline
-bei planar-dominanten Szenen zusammen? Wann ist COLMAP schlicht unersetzbar?
+COLMAP — einem der führenden Open-Source-Werkzeuge für 3D-Rekonstruktion —
+verglichen. Dabei werden nicht nur die Erfolge präsentiert, sondern auch die
+Grenzen ehrlich benannt: Wo versagt globales Bundle Adjustment bei mehr als
+~50 Bildern? Warum bricht die Pipeline bei planar-dominanten Szenen zusammen?
+Wann ist COLMAP schlicht unersetzbar?
 
 Der Beitrag richtet sich an alle, die verstehen wollen, wie 3D-Rekonstruktion
-aus Fotos funktioniert — und was es bedeutet, sie selbst zu implementieren.
-Neben den technischen Erkenntnissen werden Learnings aus dem Entwicklungsprozess
-geteilt: Von unterschätzter Parameterempfindlichkeit über Debugging geometrischer
-Algorithmen bis hin zu der Frage, wann es sinnvoller ist, auf bestehende
+aus Bildern funktioniert — und was es bedeutet, sie selbst zu implementieren.
+Neben den technischen Erkenntnissen werden Learnings aus dem Entwicklungs-
+prozess geteilt: von unterschätzter Parameterempfindlichkeit über das Debugging
+geometrischer Algorithmen bis zur Frage, wann es sinnvoller ist, auf bestehende
 Werkzeuge zu setzen als neu zu bauen.
 
-Schlagwörter: Structure-from-Motion, Photogrammetrie, Python, Laptop, COLMAP,
-              Punktwolke, Bundle Adjustment, Studierendenprojekt, Grenzen
+Schlagwörter: Structure-from-Motion, Photogrammetrie, Python, COLMAP,
+              Punktwolke, Bundle Adjustment, Visualisierung, Studierendenprojekt
 
 --------------------------------------------------------------------------------
-WARUM DIESER ABSTRACT EMPFOHLEN WIRD
+ÄNDERUNGEN GEGENÜBER EINGEREICHTER VERSION (zur Nachvollziehbarkeit)
 --------------------------------------------------------------------------------
-+ Passt am besten zu den Notizen: "was ist mit Python ohne große Ressourcen
-  auf einem Laptop möglich", "Vergleich mit COLMAP", "Limitationen und Learnings"
-+ Ehrlicher Ton → glaubwürdig und authentisch für ein Studentenprojekt
-+ Gibt dem Vortrag eine klare Dramaturgie: Aufbau → Demo → Vergleich → Grenzen
-+ 15 Minuten gut füllbar: je ~3 min pro Stufe + 2 min Vergleich + 2 min Learnings
+1. Titel: "was Learnings" → "Learnings" (Tippfehler); "aus dem" → "auf dem"
+2. Absatz 2: Visualisierungssatz ergänzt ("Ein zentrales Ziel des Vortrags…")
+   → stellt den anschaulichen Charakter des Vortrags direkt im Abstract heraus
+3. Absatz 3: "einem aktuellen Stand der Technik" → präzisiert als
+   "einem der führenden Open-Source-Werkzeuge für 3D-Rekonstruktion"
+   (COLMAP ist nicht THE State of the Art, aber einer der besten Open-Source-Tools)
+4. Absatz 4: minimale Glättung der Satzkonstruktion; "bis hin zu der Frage" →
+   "bis zur Frage" (kompakter)
+5. Schlagwörter: "Visualisierung" ergänzt (passt zum neuen Satz in Absatz 2)
 
+--------------------------------------------------------------------------------
 MÖGLICHE STRUKTUR DES VORTRAGS (15 min)
-  1. Was ist SfM, warum interessant?                           (~2 min)
-  2. Überblick Pipeline-Architektur (Diagramm)                 (~2 min)
-  3. Live/Video: Pipeline auf einem echten Objekt durchlaufen  (~3 min)
-  4. Vergleich: eigene Pipeline vs. COLMAP (Tabelle + Bilder)  (~4 min)
-  5. Limitationen — wo und warum es scheitert                  (~2 min)
-  6. Learnings & Fazit                                         (~2 min)
+--------------------------------------------------------------------------------
+  1. Was ist Photogrammetrie / SfM, warum relevant?             (~2 min)
+     → ein konkretes Beispiel zeigen (z.B. Denkmal, Gebäude, Alltagsobjekt)
+  2. Pipeline-Überblick als Diagramm                            (~2 min)
+     → Bilder → Merkmale → Matches → Rekonstruktion → Modell
+  3. Jede Stufe visualisiert (Screenshots / kurzes Video)       (~4 min)
+     → SIFT-Keypoints auf Bild, FLANN-Matches, Fundamentalmatrix-Epipolarlinien,
+        wachsende Punktwolke Schritt für Schritt
+  4. Vergleich eigene Pipeline vs. COLMAP (Tabelle + Bilder)    (~3 min)
+     → Punktanzahl, Laufzeit, visuelle Qualität nebeneinander
+  5. Grenzen — wo und warum es scheitert                        (~2 min)
+  6. Learnings & Fazit                                          (~2 min)
 
+--------------------------------------------------------------------------------
 NOCH OFFENE PUNKTE (vor dem Vortrag umzusetzen)
-  - COLMAP-Integration für direkten Vergleich (run_sfm.py --backend colmap
-    existiert bereits als Stub in sfm/colmap_backend.py)
-  - Testdatensatz mit Ground Truth wählen (z.B. ETH3D, Tanks-and-Temples,
-    oder eigene Aufnahmen eines bekannten Objekts)
-  - Laufzeit-Messung und Punktanzahl-Vergleich dokumentieren
+--------------------------------------------------------------------------------
+  - COLMAP-Integration für direkten Vergleich
+    (sfm/colmap_backend.py ist als Stub vorhanden)
+  - Testdatensatz wählen — Empfehlung: eigene Aufnahmen eines bekannten Objekts
+    (einfacher zu erklären als externe Benchmarks wie ETH3D)
+  - Laufzeit und Punktanzahl auf demselben Datensatz messen und tabellieren
 ================================================================================
