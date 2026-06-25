@@ -1,0 +1,225 @@
+================================================================================
+PAPER-ENTWURF — SKELETT  (Vollbeitrag, max. 6 A4-Farbseiten, Deadline 07.08.2026)
+Format: Segoe UI · Fließtext 9 pt / 12 pt Zeilenabstand · Blocksatz
+        Überschriften: Segoe UI Bold 10 pt · dunkelblau
+        Abbildungen: zentriert, Bildunterschrift zentriert darunter
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+TITELSEITE
+────────────────────────────────────────────────────────────────────────────────
+
+3D auf dem Laptop: Photogrammetrie mit reinen Python-Mitteln —
+Möglichkeiten, Grenzen und Learnings
+
+Rudolf Hoffmann
+HTW Berlin – Hochschule für Technik und Wirtschaft Berlin
+Fachbereich 2 – Informatik in Ingenieurwissenschaften
+Wilhelminenhofstr. 75a, 12459 Berlin
+[E-Mail-Adresse]  |  [optionale Web-URL]
+
+
+────────────────────────────────────────────────────────────────────────────────
+Abstract
+────────────────────────────────────────────────────────────────────────────────
+
+[→ Identischer Text wie im Einreichungs-Abstract — ca. 100–130 Wörter.
+   Einfach aus abstract_submission_final.txt übernehmen und ggf. mit
+   deiner neuesten angepassten Version ersetzen.]
+
+Keywords: Structure-from-Motion; Photogrammetrie; Python; COLMAP; Punktwolke;
+          Bundle Adjustment; Visualisierung; Studierendenprojekt
+
+
+────────────────────────────────────────────────────────────────────────────────
+1  Einleitung / Thema
+────────────────────────────────────────────────────────────────────────────────
+
+[INHALT — ca. 3/4 Spalte]
+
+→ Einstieg mit einem konkreten, motivierenden Beispiel: Warum ist 3D-
+  Rekonstruktion aus Fotos relevant? (Drohnenkartierung, Denkmalpflege,
+  AR/VR — ein Satz je Anwendung, eine einprägsame Abbildung).
+
+→ Problemstellung: Kommerzielle und Open-Source-Werkzeuge wie COLMAP
+  existieren — aber was steckt algorithmisch dahinter, und wie weit trägt
+  eine eigene Python-Implementierung auf Consumer-Hardware?
+
+→ Überblick Beitragsstruktur: Dieser Beitrag beschreibt die Implementierung,
+  visualisiert jeden Schritt des Prozesses und vergleicht die Ergebnisse mit
+  COLMAP. [2–3 Sätze]
+
+  Abb. 1 — Pipeline-Diagramm: Bilder → SIFT → Matching → Geometrie →
+            Rekonstruktion → Punktwolke → Mesh (Flussdiagramm)
+
+
+────────────────────────────────────────────────────────────────────────────────
+2  Wissenschaftlicher Hintergrund und Motivation
+────────────────────────────────────────────────────────────────────────────────
+
+[INHALT — ca. 1 Spalte]
+
+→ Kurze Geschichte von SfM: von Ullman (1979) über Hartley & Zisserman
+  bis zu COLMAP (Schönberger & Frahm, 2016). [3–4 Sätze, keine vollständige
+  Related-Work-Section — das ist kein Forschungsbeitrag]
+
+→ Kernalgorithmen und warum sie so funktionieren:
+  - Epipolargeometrie: zwei Kameras sehen denselben Punkt → Fundamentalmatrix
+    verbindet die Bildpositionen.  [1 Satz + Abb. 2: Epipolarlinien-Visualisierung]
+  - Triangulation: bekannte Kameraposen → 3D-Punkt per Sehstrahlschnitt.
+  - Bundle Adjustment: gemeinsame Nichtlinear-Optimierung aller Größen.
+
+→ Motivation Eigenimplementierung: Transparenz, Lerneffekt, Kontrollierbarkeit
+  vs. Blackbox-Einsatz von COLMAP. [2 Sätze]
+
+
+────────────────────────────────────────────────────────────────────────────────
+3  Verwendete Methoden
+────────────────────────────────────────────────────────────────────────────────
+
+[INHALT — ca. 1,5 Spalten; dies ist der technische Kern]
+
+3.1  Merkmalsextraktion
+→ SIFT: Skalierungspyramide, Orientierungszuweisung, 128-dimensionaler
+  Deskriptor. Warum SIFT? Robust gegenüber Skalierung, Rotation, Beleuchtung.
+  [2 Sätze + Abb. 3: SIFT-Keypoints auf Foto]
+
+3.2  Feature Matching
+→ FLANN + Lowe's Ratio Test: schnelle Approximate-Nearest-Neighbour-Suche,
+  Ratio-Test filtert mehrdeutige Matches (nur eindeutige 1:1-Treffer bleiben).
+  [2 Sätze + Abb. 4: Matches-Visualisierung — grüne Linien korrekte Matches]
+
+3.3  Geometrische Verifikation
+→ RANSAC schätzt die Fundamentalmatrix F aus minimaler Punktmenge; nur
+  geometrisch konsistente Matches bleiben als Inlier erhalten.
+  Zusätzlich: H/F-Kompetition erkennt planare Szenen (Sonderfall).
+  [2–3 Sätze + Abb. 5: Epipolarlinien nach Verifikation]
+
+3.4  Inkrementelle Rekonstruktion
+→ Two-View-Initialisierung mit bestem Initialpaar; dann iterativ:
+  PnP registriert neue Kameras, Triangulation fügt neue 3D-Punkte hinzu.
+  [3 Sätze + Abb. 6: wachsende Punktwolke Schritt 1 / 10 / 30 Kameras]
+
+3.5  Bundle Adjustment
+→ Scipy TRF-Minimierung des Reprojektionsfehlers über alle Kameras und Punkte.
+  Spärliche Jakobimatrix macht das Problem numerisch handhabbar. [2 Sätze]
+
+3.6  Optionale Erweiterungen
+→ Tiefenkarten per SGBM; Mesh-Rekonstruktion per Poisson (Open3D).
+  COLMAP als Referenzsystem: gleiche Eingabe, automatisierter Ablauf. [2 Sätze]
+
+
+────────────────────────────────────────────────────────────────────────────────
+4  Ergebnisse
+────────────────────────────────────────────────────────────────────────────────
+
+[INHALT — ca. 1 Spalte]
+
+→ Datensatz-Beschreibung: [N] Bilder, Objekt / Szene, Aufnahmebedingungen.
+  [1–2 Sätze]
+
+→ Qualitative Ergebnisse: Punktwolken-Visualisierungen der eigenen Pipeline.
+  Abb. 7: Punktwolke Eigenimplementierung (Seitenansicht + Draufsicht)
+  Abb. 8: COLMAP-Ergebnis auf identischen Daten (gleiche Ansicht)
+
+→ Quantitativer Vergleich (Tabelle 1):
+
+  | Metrik              | Python-Pipeline | COLMAP   |
+  |---------------------|-----------------|----------|
+  | Laufzeit (N Bilder) | [X] Sekunden    | [Y] Sek. |
+  | Rekonstruierte Pkt. | [A]             | [B]      |
+  | Reprojektionsfehler | [px]            | [px]     |
+  | Kameras registriert | [K/N]           | [N/N]    |
+
+  [Werte nach tatsächlichen Experimenten eintragen]
+
+→ Visualisierung der Zwischenergebnisse: Herausgestellte Stärke gegenüber
+  COLMAP-Blackbox — jeder Schritt nachvollziehbar. [1–2 Sätze]
+
+
+────────────────────────────────────────────────────────────────────────────────
+5  Diskussion
+────────────────────────────────────────────────────────────────────────────────
+
+[INHALT — ca. 3/4 Spalte]
+
+→ Wo funktioniert die Python-Pipeline gut? Strukturierte Szenen, < 50 Bilder,
+  ausreichend Textur — vergleichbare Qualität zu COLMAP. [2 Sätze]
+
+→ Wo versagt sie?
+  - Skalierung: globales BA mit O(C²·P) wird bei > 50 Bildern zum Engpass.
+  - Planare Szenen: Fundamentalmatrix instabil → Initialisierung scheitert.
+  - Texturarme Flächen: SIFT findet zu wenige Keypoints.
+  [3–4 Sätze + evtl. Negativbeispiel-Abbildung]
+
+→ Was erklärt COLMAPs Überlegenheit? Nicht der Algorithmus, sondern
+  Implementierungsreife: Parallelisierung, Robustheit, jahrelange Tuning-Arbeit.
+  [2 Sätze]
+
+→ Mehrwert moderner lernbasierter Methoden (LightGlue): Bessere Matches in
+  schwierigen Situationen, aber GPU-Abhängigkeit — kein Freiticket.  [1–2 Sätze]
+
+
+────────────────────────────────────────────────────────────────────────────────
+6  Fazit
+────────────────────────────────────────────────────────────────────────────────
+
+[INHALT — ca. 1/2 Spalte]
+
+→ Zusammenfassung der Erkenntnis: Python-SfM ist auf kleinen Datensätzen
+  wettbewerbsfähig und hat einen klaren didaktischen Mehrwert. [1–2 Sätze]
+
+→ Wichtigstes Learning: Die eigene Implementierung zeigt, wo die echten
+  Schwierigkeiten liegen — nicht im Algorithmus auf dem Papier, sondern in
+  Robustheit, Parameterempfindlichkeit und Debugging. [1–2 Sätze]
+
+→ Ausblick: Was würde die Qualität am meisten verbessern?
+  (lokales BA, lernbasiertes Matching, dichteres MVS). [1 Satz]
+
+
+────────────────────────────────────────────────────────────────────────────────
+Literatur
+────────────────────────────────────────────────────────────────────────────────
+
+[1] D. Lowe, "Distinctive Image Features from Scale-Invariant Keypoints",
+    IJCV, 60(2), 2004.
+
+[2] R. Hartley, A. Zisserman, "Multiple View Geometry in Computer Vision",
+    Cambridge University Press, 2. Aufl., 2003.
+
+[3] J. L. Schönberger, J.-M. Frahm, "Structure-from-Motion Revisited",
+    CVPR, 2016.
+
+[4] M. Muja, D. Lowe, "Fast Approximate Nearest Neighbors with Automatic
+    Algorithm Configuration", VISAPP, 2009.
+
+[5] P. F. Lindenberger, P.-E. Sarlin, M. Pollefeys, "LightGlue: Local Feature
+    Matching at Light Speed", ICCV, 2023.
+
+[6] [Weitere Referenzen nach Bedarf — z.B. Open3D, SGBM, Poisson Surface]
+
+
+================================================================================
+SEITEN-KALKULATION (Orientierung, vor Formatierung)
+================================================================================
+  Abstract + Keywords                ~0.2 Seiten
+  1. Einleitung (+ Abb. 1)          ~0.8 Seiten
+  2. Hintergrund (+ Abb. 2)         ~0.8 Seiten
+  3. Methoden (+ Abb. 3–6)          ~1.5 Seiten
+  4. Ergebnisse (+ Abb. 7–8, Tab.)  ~1.2 Seiten
+  5. Diskussion                     ~0.7 Seiten
+  6. Fazit                          ~0.4 Seiten
+  Literatur                         ~0.4 Seiten
+  ────────────────────────────────────
+  GESAMT                            ~6.0 Seiten  ✓
+
+================================================================================
+OFFENE TODO VOR PAPIERERSTELLUNG
+================================================================================
+  [ ] COLMAP-Vergleich auf echtem Datensatz durchführen → Tab. 1 befüllen
+  [ ] Eigene Aufnahmen als Testdatensatz (Objekt/Gebäudeecke, 20–50 Bilder)
+  [ ] Screenshots jeder Pipeline-Stufe für Abb. 3–6 erzeugen
+  [ ] Formatvorlage vom Organisationsteam anfordern (kommt laut Ausschreibung
+      noch rechtzeitig vor der 07.08.2026-Deadline)
+================================================================================
