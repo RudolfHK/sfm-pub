@@ -1,62 +1,22 @@
 ================================================================================
-ABSTRACT (finale Version, angepasst nach Feedback)
+ABSTRACT (finale Version)
 ================================================================================
+Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline
 
-Titel: 3D auf dem Laptop: Photogrammetrie mit reinen Python-Mitteln —
-       Möglichkeiten, Grenzen und Learnings
+Betreuer: Prof. Dr.-Ing. Frank Neumann  
+Student: Rudolf Hoffmann  
+HTW Berlin - Hochschule für Technik und Wirtschaft Berlin   
+Fachbereich 2 - Informatik in Ingenieurwissenschaften
 
-Rudolf Hoffmann
-HTW Berlin – Hochschule für Technik und Wirtschaft Berlin
-Fachbereich 2 – Informatik in Ingenieurwissenschaften
-
---------------------------------------------------------------------------------
 ABSTRACT
---------------------------------------------------------------------------------
 
-Was ist möglich, wenn man eine vollständige Photogrammetrie-Pipeline von Grund
-auf in Python implementiert — ohne spezialisierte Hardware, ohne kommerzielle
-Bibliotheken, auf einem handelsüblichen Laptop? Dieser Frage geht der Beitrag
-anhand eines studentischen Implementierungsprojekts nach.
+Was ist möglich, wenn man eine vollständige Photogrammetrie-Pipeline von Grund auf in Python implementiert, ohne spezialisierte Hardware, ohne kommerzielle Bibliotheken, auf einem handelsüblichen Laptop? Dieser Frage geht der Beitrag anhand eines studentischen Implementierungsprojekts nach.
 
-Die entwickelte Pipeline verarbeitet eine Bildsequenz in mehreren Stufen:
-Detektion lokaler Merkmale (SIFT), paarweises Matching (FLANN), robuste
-geometrische Verifikation, inkrementelle Kamerarekonstruktion (PnP,
-Triangulation) sowie Bundle Adjustment zur Optimierung aller Kameraposen und
-3D-Punkte. Optional werden Tiefenkarten (SGBM) und eine Mesh-Oberfläche
-(Poisson-Rekonstruktion) erzeugt. Ein zentrales Ziel des Vortrags ist es,
-jeden dieser Schritte anhand von Zwischenergebnissen und Visualisierungen
-greifbar zu machen — von erkannten Bildmerkmalen über übereinstimmende
-Punktpaare bis hin zur schrittweise wachsenden 3D-Punktwolke.
+Die entwickelte Pipeline verarbeitet eine Bildsequenz in mehreren Stufen: Detektion lokaler Merkmale (SIFT), paarweises Matching (FLANN), robuste geometrische Verifikation, inkrementelle Kamerarekonstruktion (PnP, Triangulation) sowie Bundle Adjustment zur Optimierung aller Kameraposen und 3D-Punkte. Optional werden Tiefenkarten (SGBM) und eine Mesh-Oberfläche (Poisson-Rekonstruktion) erzeugt. Ein zentrales Ziel des Projekts ist es, jeden dieser Schritte anhand von Zwischenergebnissen und Visualisierungen greifbar zu machen: von erkannten Bildmerkmalen über übereinstimmende Punktpaare bis hin zur schrittweise wachsenden 3D-Punktwolke.
 
-Im Vortrag werden erzielte Ergebnisse auf realen Datensätzen gezeigt und mit
-COLMAP — einem der führenden Open-Source-Werkzeuge für 3D-Rekonstruktion —
-verglichen. Dabei werden nicht nur die Erfolge präsentiert, sondern auch die
-Grenzen ehrlich benannt: Wo versagt globales Bundle Adjustment bei mehr als
-~50 Bildern? Warum bricht die Pipeline bei planar-dominanten Szenen zusammen?
-Wann ist COLMAP schlicht unersetzbar?
+Im Paper werden die erzielten Ergebnisse auf realen Datensätzen gezeigt und mit COLMAP, einem der führenden Open-Source-Werkzeuge für 3D-Rekonstruktion verglichen. Dabei werden nicht nur die Erfolge präsentiert, sondern auch die Grenzen ehrlich benannt: Wo versagt globales Bundle Adjustment bei mehr als \~50 Bildern? Warum bricht die Pipeline bei planar-dominanten Szenen zusammen? Und wann ist COLMAP schlicht unersetzbar?
 
-Der Beitrag richtet sich an alle, die verstehen wollen, wie 3D-Rekonstruktion
-aus Bildern funktioniert — und was es bedeutet, sie selbst zu implementieren.
-Neben den technischen Erkenntnissen werden Learnings aus dem Entwicklungs-
-prozess geteilt: von unterschätzter Parameterempfindlichkeit über das Debugging
-geometrischer Algorithmen bis zur Frage, wann es sinnvoller ist, auf bestehende
-Werkzeuge zu setzen als neu zu bauen.
-
-Schlagwörter: Structure-from-Motion, Photogrammetrie, Python, COLMAP,
-              Punktwolke, Bundle Adjustment, Visualisierung, Studierendenprojekt
-
---------------------------------------------------------------------------------
-ÄNDERUNGEN GEGENÜBER EINGEREICHTER VERSION (zur Nachvollziehbarkeit)
---------------------------------------------------------------------------------
-1. Titel: "was Learnings" → "Learnings" (Tippfehler); "aus dem" → "auf dem"
-2. Absatz 2: Visualisierungssatz ergänzt ("Ein zentrales Ziel des Vortrags…")
-   → stellt den anschaulichen Charakter des Vortrags direkt im Abstract heraus
-3. Absatz 3: "einem aktuellen Stand der Technik" → präzisiert als
-   "einem der führenden Open-Source-Werkzeuge für 3D-Rekonstruktion"
-   (COLMAP ist nicht THE State of the Art, aber einer der besten Open-Source-Tools)
-4. Absatz 4: minimale Glättung der Satzkonstruktion; "bis hin zu der Frage" →
-   "bis zur Frage" (kompakter)
-5. Schlagwörter: "Visualisierung" ergänzt (passt zum neuen Satz in Absatz 2)
+Der Artikel richtet sich an alle, die verstehen wollen, wie 3D-Rekonstruktion aus Bildern funktioniert und was es bedeutet, sie selbst zu implementieren. Neben den technischen Erkenntnissen werden Learnings aus dem Entwicklungs- prozess geteilt: von unterschätzter Parameterempfindlichkeit über das Debugging geometrischer Algorithmen bis zur Frage, wann es sinnvoller ist, auf bestehende Werkzeuge zu setzen als neu zu bauen.
 
 --------------------------------------------------------------------------------
 MÖGLICHE STRUKTUR DES VORTRAGS (15 min)
