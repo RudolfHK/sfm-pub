@@ -43,7 +43,7 @@ rekonstruieren ihre Umgebung — die zugrundeliegende Technik ist in allen Fäll
 *Structure-from-Motion* (SfM): die gleichzeitige Schätzung der Szenengeometrie und der
 Kamerapositionen aus reinen Bilddaten.
 
-> `[ABB. 1]` — **Pipeline-Übersichtsdiagramm** (NEU, siehe Visualisierungsplan):
+> `[ABB. 1]` — **Pipeline-Übersichtsdiagramm** (ERSTELLT: `paper/figures/pipeline_overview.svg`):
 > Bilder → Merkmale → Matching → geometrische Verifikation → inkrementelle
 > Rekonstruktion → Bundle Adjustment → Punktwolke → (optional) Mesh. Als roter Faden
 > für das gesamte Paper.

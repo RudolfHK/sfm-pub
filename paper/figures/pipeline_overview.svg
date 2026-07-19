@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 380" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#1F3864"/>
+    </marker>
+    <marker id="arrowGrey" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#7F7F7F"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="580" y="30" text-anchor="middle" font-size="19" font-weight="bold" fill="#1F3864">Photogrammetrie-Pipeline: von der Bildsequenz zur 3D-Punktwolke</text>
+
+  <!-- ── Core stages (left → right) ────────────────────────────────────── -->
+  <!-- box template: rounded rect, dark-blue header strip, method subtitle -->
+
+  <!-- 1 Input -->
+  <g>
+    <rect x="20" y="70" width="165" height="86" rx="8" fill="#EAF0F9" stroke="#1F3864" stroke-width="1.5"/>
+    <rect x="20" y="70" width="165" height="26" rx="8" fill="#1F3864"/>
+    <text x="102" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Bildsequenz</text>
+    <text x="102" y="120" text-anchor="middle" font-size="12" fill="#333333">Fotos eines Objekts</text>
+    <text x="102" y="138" text-anchor="middle" font-size="11" fill="#666666">(überlappende Ansichten)</text>
+  </g>
+
+  <!-- 2 Feature extraction -->
+  <g>
+    <rect x="215" y="70" width="165" height="86" rx="8" fill="#EAF0F9" stroke="#1F3864" stroke-width="1.5"/>
+    <rect x="215" y="70" width="165" height="26" rx="8" fill="#1F3864"/>
+    <text x="297" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Merkmalsextraktion</text>
+    <text x="297" y="120" text-anchor="middle" font-size="12" fill="#333333">SIFT-Keypoints</text>
+    <text x="297" y="138" text-anchor="middle" font-size="11" fill="#666666">128-D Deskriptoren</text>
+  </g>
+
+  <!-- 3 Matching -->
+  <g>
+    <rect x="410" y="70" width="165" height="86" rx="8" fill="#EAF0F9" stroke="#1F3864" stroke-width="1.5"/>
+    <rect x="410" y="70" width="165" height="26" rx="8" fill="#1F3864"/>
+    <text x="492" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Feature-Matching</text>
+    <text x="492" y="120" text-anchor="middle" font-size="12" fill="#333333">FLANN + Ratio-Test</text>
+    <text x="492" y="138" text-anchor="middle" font-size="11" fill="#666666">Korrespondenzen</text>
+  </g>
+
+  <!-- 4 Geometric verification -->
+  <g>
+    <rect x="605" y="70" width="165" height="86" rx="8" fill="#EAF0F9" stroke="#1F3864" stroke-width="1.5"/>
+    <rect x="605" y="70" width="165" height="26" rx="8" fill="#1F3864"/>
+    <text x="687" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Geom. Verifikation</text>
+    <text x="687" y="120" text-anchor="middle" font-size="12" fill="#333333">RANSAC, F-Matrix</text>
+    <text x="687" y="138" text-anchor="middle" font-size="11" fill="#666666">Epipolargeometrie</text>
+  </g>
+
+  <!-- 5 Incremental reconstruction -->
+  <g>
+    <rect x="800" y="70" width="165" height="86" rx="8" fill="#EAF0F9" stroke="#1F3864" stroke-width="1.5"/>
+    <rect x="800" y="70" width="165" height="26" rx="8" fill="#1F3864"/>
+    <text x="882" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Inkr. Rekonstruktion</text>
+    <text x="882" y="120" text-anchor="middle" font-size="12" fill="#333333">PnP + Triangulation</text>
+    <text x="882" y="138" text-anchor="middle" font-size="11" fill="#666666">kameraweise</text>
+  </g>
+
+  <!-- 6 Bundle Adjustment -->
+  <g>
+    <rect x="995" y="70" width="145" height="86" rx="8" fill="#EAF0F9" stroke="#1F3864" stroke-width="1.5"/>
+    <rect x="995" y="70" width="145" height="26" rx="8" fill="#1F3864"/>
+    <text x="1067" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Bundle Adjustment</text>
+    <text x="1067" y="120" text-anchor="middle" font-size="12" fill="#333333">scipy TRF, Huber</text>
+    <text x="1067" y="138" text-anchor="middle" font-size="11" fill="#666666">Reproj.-Fehler ↓</text>
+  </g>
+
+  <!-- arrows between core stages -->
+  <line x1="185" y1="113" x2="212" y2="113" stroke="#1F3864" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="380" y1="113" x2="407" y2="113" stroke="#1F3864" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="575" y1="113" x2="602" y2="113" stroke="#1F3864" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="770" y1="113" x2="797" y2="113" stroke="#1F3864" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="965" y1="113" x2="992" y2="113" stroke="#1F3864" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- BA loop-back arrow (every ba_interval cameras) -->
+  <path d="M 995,150 C 940,185 940,185 882,158" fill="none" stroke="#1F3864" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="938" y="200" text-anchor="middle" font-size="10" fill="#666666" font-style="italic">alle N Kameras</text>
+
+  <!-- ── Output row ────────────────────────────────────────────────────── -->
+  <!-- Sparse point cloud (primary output) -->
+  <g>
+    <rect x="995" y="240" width="145" height="64" rx="8" fill="#1F3864"/>
+    <text x="1067" y="266" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Punktwolke</text>
+    <text x="1067" y="286" text-anchor="middle" font-size="12" fill="#D6E0F0">sparse · .ply</text>
+  </g>
+  <line x1="1067" y1="156" x2="1067" y2="237" stroke="#1F3864" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Optional: MVS + Mesh (grey, dashed) -->
+  <g>
+    <rect x="605" y="240" width="165" height="64" rx="8" fill="#F2F2F2" stroke="#7F7F7F" stroke-width="1.5" stroke-dasharray="5,3"/>
+    <text x="687" y="264" text-anchor="middle" font-size="12" font-weight="bold" fill="#595959">MVS-Dichte (optional)</text>
+    <text x="687" y="285" text-anchor="middle" font-size="11" fill="#7F7F7F">StereoSGBM · dense .ply</text>
+  </g>
+  <g>
+    <rect x="800" y="240" width="165" height="64" rx="8" fill="#F2F2F2" stroke="#7F7F7F" stroke-width="1.5" stroke-dasharray="5,3"/>
+    <text x="882" y="264" text-anchor="middle" font-size="12" font-weight="bold" fill="#595959">Mesh (optional)</text>
+    <text x="882" y="285" text-anchor="middle" font-size="11" fill="#7F7F7F">Poisson · .obj</text>
+  </g>
+  <line x1="995" y1="272" x2="968" y2="272" stroke="#7F7F7F" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowGrey)"/>
+  <line x1="800" y1="272" x2="773" y2="272" stroke="#7F7F7F" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowGrey)"/>
+
+  <!-- Legend -->
+  <rect x="20" y="248" width="16" height="16" rx="3" fill="#EAF0F9" stroke="#1F3864" stroke-width="1.5"/>
+  <text x="44" y="261" font-size="11" fill="#333333">Kernstufe (immer)</text>
+  <rect x="20" y="274" width="16" height="16" rx="3" fill="#F2F2F2" stroke="#7F7F7F" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="44" y="287" font-size="11" fill="#333333">optionale Stufe</text>
+
+  <text x="580" y="345" text-anchor="middle" font-size="11" fill="#888888">Alle Kernstufen sind in reinem Python (OpenCV, SciPy) ohne spezialisierte Hardware implementiert.</text>
+</svg>
