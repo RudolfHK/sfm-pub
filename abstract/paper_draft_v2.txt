@@ -1,0 +1,495 @@
+Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline
+
+Rudolf Hoffmann, Prof. Dr.-Ing. Frank Neumann
+HTW Berlin (Hochschule für Technik und Wirtschaft Berlin), Wilhelminenhofstr. 75a,
+12459 Berlin, Rudolf.Hoffmann@Student.HTW-Berlin.de
+
+Version 2 - überarbeitet nach den Gutachten in reviews.txt.
+Zahlenwerte in eckigen Klammern [...] sind nach dem Referenzlauf einzutragen.
+
+
+Abstract: Wie weit trägt eine selbst implementierte Photogrammetrie-Pipeline auf einem
+handelsüblichen Laptop - ohne GPU-Cluster, ohne kommerzielle Software? Der Beitrag
+beantwortet diese Frage anhand eines studentischen Implementierungsprojekts von rund
+9.600 Zeilen Python. Was dabei "selbst implementiert" heißt, wird bewusst präzise
+abgegrenzt: Etablierte Bausteine werden aus Bibliotheken bezogen - SIFT, FLANN, die
+robusten Schätzer (RANSAC/MAGSAC) und PnP aus OpenCV, der nichtlineare
+Least-Squares-Löser aus SciPy, die Poisson-Rekonstruktion aus Open3D. Eigenentwicklung
+ist die gesamte Rekonstruktionslogik, die diese Bausteine erst zu einer Pipeline
+verbindet: Initialpaar-Auswahl, inkrementelle Registrierung, Track-Verwaltung und
+-Fusion, Akzeptanzkriterien für triangulierte Punkte, Ausreißerentfernung,
+Re-Triangulation sowie die vollständige Problemformulierung des Bundle Adjustment
+inklusive Verzeichnungsmodell und analytisch aufgebautem Besetzungsmuster der
+Jacobi-Matrix. Der Beitrag zeigt Ergebnisse auf realen Datensätzen im quantitativen
+Vergleich mit COLMAP und erklärt die Grenzen der Eigenimplementierung ursächlich statt
+nur symptomatisch.
+
+Keywords: Structure-from-Motion; Photogrammetrie; Python; COLMAP; Punktwolke; Bundle
+Adjustment; Visualisierung; Studierendenprojekt
+
+
+================================================================================
+1. Einleitung
+================================================================================
+
+Einstieg mit einem konkreten Beispiel: Warum ist 3D-Rekonstruktion aus Fotos relevant?
+(Drohnenkartierung, Denkmalpflege, AR/VR, Robotik.)
+
+Problemstellung: Kommerzielle und Open-Source-Werkzeuge wie COLMAP existieren und
+liefern exzellente Ergebnisse - als Blackbox. Was steckt algorithmisch dahinter, und
+wie weit reicht eine eigene Python-Implementierung auf Consumer-Hardware?
+
+Präzisierung der Fragestellung (NEU, Reaktion auf beide Gutachten): Die Frage lautet
+nicht "kann man SIFT in Python nachbauen?", sondern "welche Teile einer SfM-Pipeline
+muss man heute selbst schreiben, um sie zu verstehen und zu kontrollieren - und welche
+sollte man bewusst nicht selbst schreiben?". Abschnitt 3 beantwortet diese Frage
+komponentenweise und explizit.
+
+Beitrag dieses Papers in drei Punkten:
+  (1) eine nachvollziehbare, offengelegte Abgrenzung von Eigenleistung und
+      Bibliotheksnutzung,
+  (2) ein quantitativer Vergleich mit COLMAP auf identischen Datensätzen,
+  (3) eine ursachenbezogene Analyse der Grenzen, nicht nur deren Aufzählung.
+
+
+================================================================================
+2. Wissenschaftlicher Hintergrund und Motivation
+================================================================================
+
+Kurze Geschichte von SfM bis COLMAP.
+
+Kernalgorithmen und warum sie funktionieren: Epipolargeometrie, Triangulation,
+PnP, Bundle Adjustment als nichtlineares Least-Squares-Problem.
+
+Motivation der Eigenimplementierung: Transparenz, Lerneffekt, Kontrollierbarkeit
+gegenüber dem Blackbox-Einsatz von COLMAP. Wichtige Einordnung: Eigenimplementierung
+heißt hier Nachvollziehbarkeit der Verarbeitungslogik, nicht Verzicht auf
+Bibliotheken. Diese Unterscheidung wird in Abschnitt 3.1 operationalisiert.
+
+
+================================================================================
+3. Verwendete Methoden
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 Eigenimplementierung und Bibliotheksnutzung: eine explizite Abgrenzung  [NEU]
+--------------------------------------------------------------------------------
+
+Dieser Abschnitt geht direkt auf beide Gutachten ein. Er wird bewusst an den Anfang
+des Methodenteils gestellt, weil alle folgenden Unterabschnitte darauf aufbauen.
+
+Grundsatz: Nachgebaut wird nichts, was als numerisch ausgereifte Referenzimplementierung
+frei verfügbar ist. Selbst geschrieben wird alles, was die Verarbeitungslogik
+ausmacht - also jede Entscheidung darüber, welche Daten wann an welchen Baustein
+übergeben und welche Ergebnisse akzeptiert oder verworfen werden.
+
+  +--------------------------+------------------------------+---------------------+
+  | Komponente               | Herkunft                     | Fundstelle          |
+  +--------------------------+------------------------------+---------------------+
+  | SIFT-Detektion und       | Bibliothek                   | feature_extraction  |
+  | -Deskriptor              | cv2.SIFT_create              | .py                 |
+  +--------------------------+------------------------------+---------------------+
+  | Deskriptor-Matching      | Bibliothek                   | feature_matching.py |
+  |                          | cv2.FlannBasedMatcher        |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Ratio-Test, Kreuzcheck,  | EIGEN                        | feature_matching.py |
+  | Matching-Strategien      | (sequenziell, Vocab-Tree     | _ratio_matches_cpu, |
+  | (Bildpaar-Auswahl)       | mit cv2.kmeans als Baustein) | SequentialMatcher,  |
+  |                          |                              | VocabTreeMatcher    |
+  +--------------------------+------------------------------+---------------------+
+  | F-/E-/H-Schätzung,       | Bibliothek                   | geometric_          |
+  | robuste Schätzung        | cv2.findFundamentalMat,      | verification.py     |
+  |                          | findEssentialMat,            |                     |
+  |                          | findHomography, USAC_MAGSAC  |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Hartley-Normalisierung,  | EIGEN                        | geometric_          |
+  | Degeneriertheitstests    | _hartley_normalize,          | verification.py     |
+  | (Torr-Kriterium, SVD)    | Planaritätsprüfung           |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Posenzerlegung           | Bibliothek                   | reconstruction.py   |
+  |                          | cv2.recoverPose              |                     |
+  +--------------------------+------------------------------+---------------------+
+  | PnP-Registrierung        | Bibliothek                   | reconstruction.py   |
+  |                          | cv2.solvePnPRansac (EPnP),   | _register_image     |
+  |                          | solvePnPRefineLM             |                     |
+  +--------------------------+------------------------------+---------------------+
+  | DLT-Triangulation        | beides: cv2.triangulatePoints| reconstruction.py   |
+  |                          | und eigene NumPy-Variante    | _triangulate_dlt,   |
+  |                          | (batched)                    | _triangulate_batch  |
+  +--------------------------+------------------------------+---------------------+
+  | Initialpaar-Auswahl,     | EIGEN                        | reconstruction.py   |
+  | Auswahl des nächsten     |                              | _select_seed_pair,  |
+  | Bildes                   |                              | _pick_next_image    |
+  +--------------------------+------------------------------+---------------------+
+  | Track-Aufbau, -Fusion,   | EIGEN                        | reconstruction.py   |
+  | Beobachtungsverwaltung   |                              | _merge_tracks,      |
+  |                          |                              | _add_obs, _link_kp  |
+  +--------------------------+------------------------------+---------------------+
+  | Akzeptanzkriterien für   | EIGEN                        | reconstruction.py   |
+  | 3D-Punkte (Cheiralität,  |                              | _accept_batch,      |
+  | Reprojektionsfehler,     |                              | _accept_point,      |
+  | Schnittwinkel)           |                              | _triangulation_     |
+  |                          |                              | angle_ok            |
+  +--------------------------+------------------------------+---------------------+
+  | Ausreißerentfernung,     | EIGEN                        | reconstruction.py   |
+  | Re-Triangulation nach BA |                              | _remove_outlier_    |
+  |                          |                              | points,             |
+  |                          |                              | _retriangulate_     |
+  |                          |                              | after_ba            |
+  +--------------------------+------------------------------+---------------------+
+  | BA: Residuenfunktion,    | EIGEN                        | bundle_adjustment.  |
+  | Projektionsmodell mit    |                              | py _residuals_v2,   |
+  | Verzeichnung, batched    |                              | _project_distorted, |
+  | Rodrigues, Besetzungs-   |                              | _rodrigues_rotate_  |
+  | muster der Jacobi-Matrix |                              | batch,              |
+  |                          |                              | _build_sparsity_v2  |
+  +--------------------------+------------------------------+---------------------+
+  | BA: numerischer Löser    | Bibliothek                   | bundle_adjustment.  |
+  |                          | scipy.optimize.least_squares | py BundleAdjuster   |
+  |                          | (TRF); optional pyceres      |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Aufteilung lokales /     | EIGEN                        | reconstruction.py   |
+  | globales BA, Zeitpunkte  |                              | _run_local_ba,      |
+  |                          |                              | _run_ba             |
+  +--------------------------+------------------------------+---------------------+
+  | Intrinsics-Schätzung,    | EIGEN                        | intrinsics.py       |
+  | EXIF-Brennweite,         |                              |                     |
+  | Kameramodell pro Bild    |                              |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Stereo-Rektifizierung,   | Bibliothek                   | mvs.py              |
+  | SGBM-Disparität          | cv2.stereoRectify,           |                     |
+  |                          | StereoSGBM_create,           |                     |
+  |                          | reprojectImageTo3D           |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Auswahl der Stereopaare, | EIGEN                        | mvs.py              |
+  | Tiefenkartenfusion,      |                              | MVSDensifier        |
+  | Konsistenzfilter         |                              |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Poisson-, Ball-Pivoting-,| Bibliothek                   | sfm/mesh/           |
+  | Alpha-Shape-Rekonstr.    | Open3D                       | reconstruction.py   |
+  +--------------------------+------------------------------+---------------------+
+  | Punktwolken-Vorbereitung,| EIGEN                        | sfm/mesh/           |
+  | Mesh-Bereinigung, Export |                              | pointcloud_prep.py, |
+  |                          |                              | cleaning.py,        |
+  |                          |                              | postprocess.py      |
+  +--------------------------+------------------------------+---------------------+
+  | Punktwolken-Export,      | EIGEN                        | point_cloud.py      |
+  | bilineares Farbsampling  |                              |                     |
+  +--------------------------+------------------------------+---------------------+
+  | Visualisierungssuite     | EIGEN (Matplotlib als        | visualizer.py       |
+  | (~1.600 Zeilen)          | Zeichenbibliothek)           |                     |
+  +--------------------------+------------------------------+---------------------+
+
+  Optionale, zuschaltbare Backends (nicht Teil der Standardkonfiguration, aber im
+  Paper zu erwähnen, weil sie die Bibliotheksgrenze verschieben): SuperPoint- und
+  DISK-Merkmale, LightGlue- und LoFTR-Matching, DINOv2-basierte Bildpaarauswahl
+  (torch/kornia), pyceres als BA-Backend mit Schur-Komplement, poselib für die
+  Registrierung, COLMAP selbst als Referenz-Backend (colmap_backend.py).
+
+Antwort auf "wirklich alles Python?" (Gutachten 2, wörtlich): Ja - kein Bestandteil
+des Projekts ist in einer anderen Sprache geschrieben. Die gesamte Steuerungs- und
+Geometrielogik ist Python mit NumPy. Gleichzeitig nein - die numerisch teuren Kernels
+(SIFT, FLANN, RANSAC-Schleifen, der Least-Squares-Löser, Poisson) laufen in den
+C++-Backends von OpenCV, SciPy und Open3D. Diese Unterscheidung ist für die
+Laufzeitdiskussion in Abschnitt 5 wesentlich: Wo Python die Rechenzeit dominiert,
+liegt es an der eigenen Schleifenlogik; wo Bibliotheken dominieren, ist die
+Eigenimplementierung nicht der Engpass. Abschnitt 4 weist deshalb die Laufzeit
+stufenweise aus.
+
+--------------------------------------------------------------------------------
+3.2 Merkmalsextraktion (SIFT)
+--------------------------------------------------------------------------------
+Verfahren, Parameter, warum SIFT und nicht ORB/AKAZE. Eigene Anteile: Vorverarbeitung,
+Keypoint-Budget pro Bild, Caching.
+
+--------------------------------------------------------------------------------
+3.3 Feature Matching (FLANN) und Bildpaar-Auswahl
+--------------------------------------------------------------------------------
+Ratio-Test, Kreuzcheck. Eigene Anteile: exhaustive vs. sequenzielle vs.
+Vocabulary-Tree-Strategie und deren Auswirkung auf die Laufzeit bei wachsender
+Bildzahl (Übergang zu Abschnitt 5.1).
+
+--------------------------------------------------------------------------------
+3.4 Geometrische Verifikation
+--------------------------------------------------------------------------------
+RANSAC/MAGSAC-Schätzung von F und E, Epipolarlinien nach Verifikation.
+Eigene Anteile: Hartley-Normalisierung, Torr-Kriterium (Homographie-gegen-
+Fundamentalmatrix), SVD-basierter Planaritätstest. Diese beiden Tests sind die
+Grundlage der Erklärung in Abschnitt 5.2 und sollten hier bereits sauber hergeleitet
+werden.
+
+--------------------------------------------------------------------------------
+3.5 Inkrementelle Rekonstruktion
+--------------------------------------------------------------------------------
+Two-View-Initialisierung, dann iterativ PnP und Triangulation. Eigene Anteile:
+Auswahlkriterien für Initialpaar und Folgebilder, Track-Verwaltung, die drei
+Akzeptanzkriterien, Ausreißerentfernung, Re-Triangulation.
+
+--------------------------------------------------------------------------------
+3.6 Bundle Adjustment
+--------------------------------------------------------------------------------
+Problemformulierung: Parametrisierung (Rodrigues-Rotationsvektoren, Translation,
+Punkte, optional Brennweite und Verzeichnungskoeffizienten), Residuum, Huber-Verlust.
+Eigene Anteile: Aufbau des Besetzungsmusters der Jacobi-Matrix, ohne das der Löser
+bei realistischer Problemgröße nicht terminiert - hier lohnt eine kurze Herleitung,
+warum die Jacobi-Matrix dünn besetzt ist. Lokales gegen globales BA. SciPy-TRF als
+Löser, optional pyceres.
+
+--------------------------------------------------------------------------------
+3.7 Optionale Erweiterungen
+--------------------------------------------------------------------------------
+Dichte Rekonstruktion (SGBM, eigene Tiefenkartenfusion), Mesh-Rekonstruktion per
+Poisson (Open3D), COLMAP als Referenzsystem.
+
+
+================================================================================
+4. Ergebnisse
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1 Datensätze
+--------------------------------------------------------------------------------
+Beschreibung der verwendeten Datensätze und was einen guten SfM-Datensatz ausmacht
+(Überlappung, Basislinie, Texturierung, Beleuchtungskonstanz). Je Datensatz:
+Bildanzahl, Auflösung, Aufnahmegerät, Szenentyp. Bewusst mit aufnehmen: ein
+texturarmer und ein planar dominierter Datensatz als Negativbeispiele für
+Abschnitt 5.
+
+Referenzhardware exakt angeben (CPU, RAM, kein CUDA), da die gesamte Argumentation
+"auf dem Laptop" darauf beruht.
+
+--------------------------------------------------------------------------------
+4.2 Qualitative Ergebnisse
+--------------------------------------------------------------------------------
+Punktwolken der eigenen Pipeline gegenüber COLMAP auf identischen Eingabedaten,
+gleiche Kameraperspektive für die Abbildungen.
+
+--------------------------------------------------------------------------------
+4.3 Quantitativer Vergleich mit COLMAP  [ausgebaut, Reaktion auf Gutachten 1]
+--------------------------------------------------------------------------------
+
+Je Datensatz und je System (eigene Pipeline / COLMAP):
+
+  +-------------------------------------------+---------------+---------------+
+  | Metrik                                    | Eigene P.     | COLMAP        |
+  +-------------------------------------------+---------------+---------------+
+  | registrierte Kameras (von N)              | [...]         | [...]         |
+  | rekonstruierte 3D-Punkte                  | [...]         | [...]         |
+  | mittlere Track-Länge                      | [...]         | [...]         |
+  | mittlerer Reprojektionsfehler (px)        | [...]         | [...]         |
+  | Median-Reprojektionsfehler (px)           | [...]         | [...]         |
+  | Laufzeit gesamt (s)                       | [...]         | [...]         |
+  | Spitzenspeicherbedarf (MB)                | [...]         | [...]         |
+  +-------------------------------------------+---------------+---------------+
+
+Geometrischer Vergleich der Punktwolken nach Registrierung (Skalierung ist bei SfM
+nicht bestimmt, daher Similarity-Alignment vor dem Vergleich): mittlerer und medianer
+Abstand zum nächsten Nachbarn, Vollständigkeit als Anteil der COLMAP-Punkte innerhalb
+eines Toleranzradius. Werkzeug: paper/scripts/compare_ply.py.
+
+Laufzeit stufenweise aufgeschlüsselt (Reaktion auf die Sprachfrage aus Gutachten 2 -
+diese Tabelle zeigt empirisch, wo Python und wo die C++-Backends die Zeit verbrauchen):
+
+  +-------------------------------------------+---------------+---------------+
+  | Stufe                                     | Zeit (s)      | Anteil        |
+  +-------------------------------------------+---------------+---------------+
+  | Merkmalsextraktion (OpenCV/C++)           | [...]         | [...]         |
+  | Matching (OpenCV/C++)                     | [...]         | [...]         |
+  | geometrische Verifikation (gemischt)      | [...]         | [...]         |
+  | inkrementelle Registrierung (Python)      | [...]         | [...]         |
+  | Bundle Adjustment (SciPy/C++ + Python-    | [...]         | [...]         |
+  |   Residuen)                               |               |               |
+  +-------------------------------------------+---------------+---------------+
+
+--------------------------------------------------------------------------------
+4.4 Skalierungsverhalten
+--------------------------------------------------------------------------------
+Laufzeit und Speicher über wachsende Bildzahl (z. B. 10 / 20 / 40 / 60 / 80 Bilder
+desselben Datensatzes) für beide Systeme. Diese Messreihe belegt die in Abschnitt 5.1
+behauptete Ursache und ersetzt die bisher unbelegte Aussage "ab ca. 50 Bildern".
+Der tatsächliche Schwellenwert ist aus der Messung abzuleiten, nicht vorab zu setzen.
+
+--------------------------------------------------------------------------------
+4.5 Visualisierung der Zwischenergebnisse
+--------------------------------------------------------------------------------
+Merkmale, verifizierte Korrespondenzen, Epipolarlinien, schrittweises Wachstum der
+Punktwolke, Bildgraph. Siehe paper/visualization_plan.md und FIGURE_RUNBOOK.md.
+
+
+================================================================================
+5. Diskussion: Ursachen der Grenzen  [neu strukturiert, Reaktion auf Gutachten 2]
+================================================================================
+
+Vorbemerkung: Jede Grenze wird auf ihren algorithmischen Mechanismus zurückgeführt.
+Die Gliederung folgt bewusst dem Schema Beobachtung -> Ursache -> Gegenmaßnahme,
+weil Gutachten 2 genau das Fehlen der Ursachen bemängelt hat.
+
+--------------------------------------------------------------------------------
+5.1 Skalierung des globalen Bundle Adjustment
+--------------------------------------------------------------------------------
+Beobachtung: Die Laufzeit wächst mit der Bildzahl deutlich überproportional
+(Messreihe 4.4).
+
+Ursache: Das voreingestellte Backend löst das Least-Squares-Problem mit
+scipy.optimize.least_squares (Trust-Region-Reflective). Der Löser nutzt zwar das
+übergebene Besetzungsmuster der Jacobi-Matrix, aber kein Schur-Komplement - die
+Blockstruktur des SfM-Problems (wenige Kameraparameter, sehr viele Punktparameter)
+wird also nicht ausgenutzt. COLMAP eliminiert die Punktblöcke über das
+Schur-Komplement und löst nur das reduzierte Kamerasystem. Hinzu kommt, dass die
+Residuen- und Jacobi-Auswertung in Python/NumPy erfolgt und pro Iteration über alle
+Beobachtungen läuft.
+
+Beleg: bundle_adjustment.py, BundleAdjuster gegenüber PyceresBundleAdjuster
+(LinearSolverType.SPARSE_SCHUR). Der Vergleich beider Backends auf demselben
+Datensatz ist die sauberste Messung dieser Aussage und sollte ins Paper.
+
+Gegenmaßnahme im Projekt: lokales BA über ein Fenster zuletzt registrierter Kameras,
+globales BA nur in größeren Abständen.
+
+--------------------------------------------------------------------------------
+5.2 Planar dominierte Szenen
+--------------------------------------------------------------------------------
+Beobachtung: Bei überwiegend planaren Szenen registriert die Pipeline deutlich
+weniger Bilder; im Extremfall kommt keine Rekonstruktion zustande.
+
+Ursache - hier ist die bisherige Formulierung im Abstract zu korrigieren: Die
+Pipeline "bricht" nicht zusammen im Sinne falscher Ergebnisse, sondern verwirft
+Bildpaare bewusst. Liegen die Korrespondenzen nahezu auf einer Ebene, erklärt eine
+Homographie die Daten ebenso gut wie die Fundamentalmatrix; die daraus abgeleitete
+Essential-Matrix ist schlecht konditioniert und recoverPose liefert eine im
+Rotationsanteil weitgehend beliebige Pose. Die geometrische Verifikation erkennt
+das über zwei Tests und verwirft das Paar: das Torr-Kriterium (Homographie erklärt
+mehr als 85 Prozent der F-Inlier) und einen SVD-Test auf Rangverlust der zentrierten
+Punktkoordinaten. Die Folge ist ein ausgedünnter oder zerfallender Bildgraph -
+also ein Registrierungsproblem, kein Genauigkeitsproblem.
+
+Beleg: geometric_verification.py.
+
+Gegenmaßnahme, die im Ausblick zu diskutieren ist: explizite Homographie-basierte
+Initialisierung für planare Szenen statt Verwerfen des Paares.
+
+--------------------------------------------------------------------------------
+5.3 Texturarme Oberflächen
+--------------------------------------------------------------------------------
+Beobachtung: Auf glatten, einfarbigen Flächen entstehen Löcher in der Punktwolke,
+betroffene Bilder werden teilweise gar nicht registriert.
+
+Ursache: SIFT reagiert auf Blob- und Kantenstrukturen. Fehlen diese, sinkt die
+Keypoint-Dichte so weit, dass nach Ratio-Test und geometrischer Verifikation zu
+wenige Korrespondenzen für eine stabile PnP-Lösung übrig bleiben. Das ist keine
+Schwäche der Implementierung, sondern des gewählten Merkmalsoperators. Prüfbar ist
+das über einen Kontrollversuch: Erreichen die optional zuschaltbaren gelernten
+Merkmale (SuperPoint, DISK) auf denselben Daten mehr Registrierungen, liegt die
+Ursache am Operator und nicht an der Pipeline. Ergebnis: [...] registrierte Kameras
+mit SIFT gegenüber [...] mit SuperPoint.
+
+--------------------------------------------------------------------------------
+5.4 Drift
+--------------------------------------------------------------------------------
+Beobachtung: Bei langen Bildsequenzen, insbesondere Rundum-Aufnahmen, weicht das
+Ende der Sequenz systematisch vom Anfang ab.
+
+Ursache: Die inkrementelle Rekonstruktion fügt Kameras nacheinander hinzu; jede
+Registrierung erbt den Fehler der vorherigen. Ohne Loop-Closure-Erkennung wird ein
+geschlossener Rundgang nicht als solcher erkannt, und das globale BA hat keine
+Beobachtung, die den Kreis schließen könnte.
+
+--------------------------------------------------------------------------------
+5.5 Wo die Pipeline gut funktioniert
+--------------------------------------------------------------------------------
+Strukturierte, gut texturierte Szenen mit ausreichender Überlappung und moderater
+Bildzahl. Hier ist die Qualität mit COLMAP vergleichbar - zu belegen über die
+Metriken aus 4.3. Diese positive Aussage ist mit Zahlen zu untermauern, damit der
+Beitrag nicht als reine Grenzenbeschreibung gelesen wird.
+
+--------------------------------------------------------------------------------
+5.6 Was COLMAPs Überlegenheit erklärt
+--------------------------------------------------------------------------------
+Zusammenführung: Schur-Komplement im BA, ausgereifte Modellauswahl bei
+Degeneriertheit, Vocabulary-Tree-Retrieval, jahrelang abgestimmte Schwellenwerte,
+optimierte C++-Implementierung. Trade-off-Diskussion: Was gewinnt man durch
+Eigenimplementierung (Transparenz, Kontrolle über jede Akzeptanzentscheidung,
+Lerneffekt), was verliert man (Robustheit, Skalierung, Parameterreife)?
+
+
+================================================================================
+6. Fazit
+================================================================================
+
+Zusammenfassung: Eine in Python geschriebene SfM-Pipeline ist auf kleinen, für SfM
+geeigneten Datensätzen mit COLMAP vergleichbar und hat als transparentes,
+schrittweise nachvollziehbares System einen eigenständigen Wert.
+
+Antwort auf die Leitfrage aus Abschnitt 1: Selbst schreiben lohnt sich bei der
+Verarbeitungslogik - Auswahlentscheidungen, Akzeptanzkriterien, Problemformulierung.
+Nicht selbst schreiben sollte man Merkmalsoperatoren, robuste Schätzer und numerische
+Löser. Die Grenze verläuft dort, wo aus Verstehen Reimplementieren würde, ohne dass
+Erkenntnis hinzukommt.
+
+Wichtigstes Learning: Die Eigenimplementierung macht sichtbar, wo die eigentlichen
+Schwierigkeiten liegen - nicht in den Einzelalgorithmen, sondern in Robustheit,
+Parameterempfindlichkeit und Debugging geometrischer Verfahren, bei denen ein
+Vorzeichenfehler ein plausibel aussehendes, aber falsches Ergebnis liefert.
+
+Ausblick: Was würde die Qualität am meisten verbessern? Kandidaten in der Reihenfolge
+des erwarteten Nutzens: Schur-Komplement im BA, Homographie-Initialisierung für
+planare Szenen, gelernte Merkmale als Standard, Loop Closure.
+
+
+================================================================================
+ANMERKUNGEN ZUR ÜBERARBEITUNG (nicht Teil des Papers)
+================================================================================
+
+Reviewer-Response-Matrix
+------------------------
+
+  Kritikpunkt                                   Adressiert in
+  --------------------------------------------- ------------------------------
+  R1: Widerspruch "von Grund auf" vs.           Abschnitt 3.1 (Tabelle),
+      Bibliotheksnutzung                        Abstract, Abschnitt 1
+  R1: Abstract wirkt wie Gliederungsentwurf     Abstract neu formuliert;
+                                                siehe abstract_submission_v2
+  R1: Ergebnisse mit konkreten Zahlen und       Abschnitt 4.3, 4.4
+      Visualisierungen, quantitativer
+      COLMAP-Vergleich
+  R1: Welche Komponenten sind selbst            Abschnitt 3.1
+      implementiert (SIFT/FLANN/RANSAC,
+      Open3D/Poisson)?
+  R2: Welche Bibliotheken, welche Sprache,      Abschnitt 3.1 Schlussabsatz,
+      "wirklich alles PYTHON?!"                 Laufzeittabelle in 4.3
+  R2: Gründe für Limitierungen nicht klar       Abschnitt 5 komplett neu
+                                                strukturiert (Beobachtung ->
+                                                Ursache -> Gegenmaßnahme)
+
+
+Inhaltliche Korrekturen gegenüber Version 1
+-------------------------------------------
+
+1. "Warum bricht die Pipeline bei planar-dominanten Szenen zusammen?" ist sachlich
+   ungenau. Der Code erkennt planare Degeneriertheit und verwirft die betroffenen
+   Paare (Torr-Kriterium und SVD-Test in geometric_verification.py). Das Symptom ist
+   ein zerfallender Bildgraph, nicht eine falsche Rekonstruktion. Korrigiert in
+   Abschnitt 5.2.
+
+2. "Wo versagt globales Bundle Adjustment bei mehr als ~50 Bildern?" nennt einen
+   Schwellenwert, der bislang nicht gemessen ist. Abschnitt 4.4 sieht eine Messreihe
+   vor; der Wert ist danach einzutragen oder die Aussage zu streichen.
+
+3. "ohne kommerzielle Bibliotheken" war korrekt, aber irreführend, weil es die
+   Verwendung freier Bibliotheken verdeckt. Ersetzt durch die explizite Abgrenzung
+   in 3.1.
+
+
+Noch zu erledigen
+-----------------
+
+  - Referenzlauf auf allen Datensätzen, Tabellen in 4.3 und 4.4 füllen
+    (paper/scripts/benchmark.py, paper/scripts/compare_ply.py)
+  - Vergleichslauf scipy-BA gegen pyceres-BA für Abschnitt 5.1
+  - Vergleichslauf SIFT gegen SuperPoint auf dem texturarmen Datensatz für 5.3
+  - Referenzhardware dokumentieren
+  - Literaturverzeichnis (fehlt in Version 1 vollständig): SIFT, RANSAC/MAGSAC,
+    Hartley/Zisserman, Torr-Kriterium, COLMAP, Poisson-Rekonstruktion, SuperPoint,
+    LightGlue
+  - Abgleich mit paper/paper_draft_v1.md: dort steht der ausformulierte Fließtext,
+    der die hier vorgenommenen Änderungen noch nicht enthält

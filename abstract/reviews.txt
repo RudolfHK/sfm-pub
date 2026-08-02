@@ -1,0 +1,56 @@
+SUBMISSION: 4
+TITLE: Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline
+
+----------------------- REVIEW 1 ---------------------
+
+SUBMISSION: 4
+TITLE: Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline
+
+----------- Relevance: Does the submission fit the workshop? -----------
+SCORE: 1 (3D-iSA)
+----- TEXT:
+Passt gut zur 3D-iSA, konkret zu "3D-Datenerfassung, Modellierung & Visualisierung".
+----------- Minimum Quality: Is the submission understandable and technically sound? -----------
+SCORE: 1 (Mostly understandable, minor issues)
+----- TEXT:
+Die Gliederung ist klar und nachvollziehbar, das Thema (eigene SfM-Pipeline vs.
+COLMAP) ist spannend und ehrlich in Erfolgen und Grenzen. Allerdings ist das
+Eingereichte noch eher ein Gliederungsentwurf als ein Abstract.
+
+Es einen inhaltlichen Widerspruch: Im Abstract wird betont, die Pipeline sei
+"von Grund auf in Python" entwickelt. Gleichzeitig werden aber
+Standardalgorithmen wie SIFT, FLANN und RANSAC verwendet, die typischerweise aus
+Bibliotheken stammen. Open3D wird explizit für die Poisson-Rekonstruktion
+genannt. Welche Rolle spiel dabei Python?
+----------- Recommendation -----------
+SCORE: 2 (Accept – The submission is generally suitable (possibly with minor weaknesses).)
+----------- Note to authors (optional) -----------
+Hinweise für Paper:
+
+Ergebnisse mit konkreten Zahlen/Visualisierungen ausarbeiten, insbesondere den
+quantitativen Vergleich zu COLMAP.
+
+Welche Komponenten der Pipeline sind tatsächlich selbst implementiert und welche
+basieren auf bestehenden Bibliotheken (z. B. für SIFT/FLANN/RANSAC, Open3D für
+Poisson-Rekonstruktion).
+----------- Reviewer’s confidence -----------
+SCORE:
+
+
+----------------------- REVIEW 2 ---------------------
+
+SUBMISSION: 4
+TITLE: Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline
+
+----------- Relevance: Does the submission fit the workshop? -----------
+SCORE: 1 (3D-iSA)
+----------- Minimum Quality: Is the submission understandable and technically sound? -----------
+SCORE: 2 (Clearly understandable and technically sound)
+----- TEXT:
+Die Idee ist gut, das beschriebene Vorgehen solide. Die Gründe für Limitierungen sind nicht klar, aber das kommt sicherlich im full paper.
+----------- Recommendation -----------
+SCORE: 2 (Accept – The submission is generally suitable (possibly with minor weaknesses).)
+----------- Note to authors (optional) -----------
+Im full paper wünscht sich der Gutachter eine klare Beschreibung welche Bibliotheken verwedet werden und in welcher Programmiersprache das alles passiert? Wirklich alles PYTHON?!
+----------- Reviewer’s confidence -----------
+SCORE:

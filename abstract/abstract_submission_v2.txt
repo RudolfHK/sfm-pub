@@ -1,0 +1,112 @@
+Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline
+
+Betreuer: Prof. Dr.-Ing. Frank Neumann
+Student: Rudolf Hoffmann
+HTW Berlin - Hochschule für Technik und Wirtschaft Berlin
+Fachbereich 2 - Informatik in Ingenieurwissenschaften
+
+ABSTRACT
+
+Wie weit trägt eine selbst implementierte Photogrammetrie-Pipeline auf einem
+handelsüblichen Laptop - ohne GPU-Cluster, ohne kommerzielle Software? Der Beitrag
+beantwortet diese Frage anhand eines studentischen Implementierungsprojekts.
+
+Was dabei "selbst implementiert" heißt, wird bewusst präzise abgegrenzt, denn genau
+in dieser Abgrenzung liegt der eigentliche Erkenntniswert. Etablierte Bausteine werden
+aus Bibliotheken bezogen und nicht nachgebaut: SIFT-Merkmale, FLANN-Matching, die
+robusten Schätzer (RANSAC/MAGSAC) für Fundamental-, Essential- und Homographie-Matrix
+sowie PnP stammen aus OpenCV, der nichtlineare Least-Squares-Löser aus SciPy, die
+Poisson-Oberflächenrekonstruktion aus Open3D. Eigenentwicklung ist die vollständige
+Rekonstruktionslogik, die diese Bausteine überhaupt erst zu einer Pipeline verbindet:
+Auswahl des Initialpaars, inkrementelle Bildregistrierung, Aufbau und Fusion der
+Feature-Tracks, die Akzeptanzkriterien für triangulierte Punkte (Cheiralität,
+Reprojektionsfehler, Schnittwinkel), Ausreißerentfernung, Re-Triangulation nach der
+Optimierung, die Aufteilung in lokales und globales Bundle Adjustment sowie dessen
+gesamte Problemformulierung samt Projektionsmodell mit Verzeichnung und analytisch
+aufgebautem Besetzungsmuster der Jacobi-Matrix. Die Antwort auf die Frage "wirklich
+alles Python?" lautet daher differenziert: Die Steuerungs- und Geometrielogik ist
+vollständig in Python und NumPy geschrieben, kein Projektbestandteil in einer anderen
+Sprache; die numerisch teuren Kernels laufen jedoch in den C++-Backends der genannten
+Bibliotheken. Der Beitrag versteht diese Grenze nicht als Einschränkung, sondern als
+das eigentliche Ergebnis: Sie zeigt, welche Teile einer SfM-Pipeline heute sinnvoll
+selbst zu schreiben sind und welche nicht.
+
+Gezeigt werden Ergebnisse auf realen Datensätzen im direkten quantitativen Vergleich
+mit COLMAP - registrierte Kameras, Punktanzahl, mittlerer Reprojektionsfehler, Laufzeit
+und Speicherbedarf sowie die geometrische Abweichung beider Punktwolken nach
+Registrierung. Ebenso werden die Grenzen nicht nur benannt, sondern ursächlich erklärt:
+Der Aufwand des globalen Bundle Adjustment wächst mit der Bildzahl überproportional,
+weil das voreingestellte SciPy-Backend kein Schur-Komplement nutzt; planar dominierte
+Szenen führen dazu, dass die geometrische Verifikation Bildpaare als degeneriert
+verwirft, weil aus einer durch eine Homographie erklärbaren Fundamentalmatrix keine
+belastbare Essential-Matrix ableitbar ist - der Bildgraph zerfällt, statt falsche Posen
+zu liefern; texturarme Flächen liefern zu wenige SIFT-Keypoints für eine stabile
+Registrierung; und ohne Loop Closure akkumuliert die inkrementelle Rekonstruktion Drift.
+
+Ein zweites Ziel ist didaktisch: Jede Verarbeitungsstufe wird über Zwischenergebnisse
+sichtbar gemacht - von detektierten Merkmalen über geometrisch verifizierte
+Korrespondenzen bis zur schrittweise wachsenden Punktwolke. Der Beitrag richtet sich an
+alle, die verstehen wollen, wie 3D-Rekonstruktion aus Bildern funktioniert, und
+diskutiert abschließend, wann Eigenimplementierung lohnt und wann etablierte Werkzeuge
+unersetzbar bleiben.
+
+
+================================================================================
+ANMERKUNGEN FÜR DIE ÜBERARBEITUNG (nicht Teil der Einreichung)
+================================================================================
+
+Reaktion auf die Gutachten
+--------------------------
+
+R1: "Inhaltlicher Widerspruch: 'von Grund auf in Python' vs. SIFT/FLANN/RANSAC
+     aus Bibliotheken, Open3D für Poisson. Welche Rolle spielt dabei Python?"
+  -> Absatz 2 vollständig neu. Die Abgrenzung ist nicht mehr implizit, sondern
+     benennt namentlich, was Bibliothek ist und was Eigenleistung. Der
+     Formulierung "von Grund auf" wurde bewusst gestrichen und durch "selbst
+     implementiert" mit expliziter Definition ersetzt.
+
+R1: "Eher ein Gliederungsentwurf als ein Abstract."
+  -> Die Ankündigungsformeln ("Im Paper werden ...", die drei rhetorischen
+     Fragen) sind entfernt. Der Text sagt jetzt, was getan wurde und was
+     herauskam, statt zu versprechen, was im Paper stehen wird.
+
+R2: "Klare Beschreibung, welche Bibliotheken verwendet werden und in welcher
+     Programmiersprache. Wirklich alles PYTHON?!"
+  -> Direkt und wörtlich adressiert im Satz "Die Antwort auf die Frage 'wirklich
+     alles Python?' lautet daher differenziert: ...". Python/NumPy für die
+     Logik, C++-Backends der Bibliotheken für die Kernels.
+
+R2: "Die Gründe für Limitierungen sind nicht klar."
+  -> Absatz 3 nennt zu jeder Grenze den Mechanismus statt des Symptoms
+     (fehlendes Schur-Komplement, Degeneriertheit der Essential-Matrix bei
+     planaren Szenen, Keypoint-Mangel, fehlendes Loop Closure).
+
+
+Codegrundlage der Aussagen (Stand: aktueller Branch)
+----------------------------------------------------
+
+  ~9.600 Zeilen Python   sfm/ + run_sfm.py, gezählt über alle .py-Dateien
+  Initialpaar-Auswahl    sfm/reconstruction.py::_select_seed_pair
+  Track-Fusion           sfm/reconstruction.py::_merge_tracks
+  Akzeptanzkriterien     sfm/reconstruction.py::_accept_batch,
+                         _triangulation_angle_ok, _accept_point
+  Re-Triangulation       sfm/reconstruction.py::_retriangulate_after_ba
+  lokales/globales BA    sfm/reconstruction.py::_run_local_ba, _run_ba
+  BA-Problemformulierung sfm/bundle_adjustment.py::_residuals_v2,
+                         _project_distorted, _build_sparsity_v2
+  Planaritätserkennung   sfm/geometric_verification.py (Torr-Kriterium,
+                         H-Inlier-Anteil > 0.85; zusätzlich SVD-Test
+                         sigma2/sigma1 < 0.01)
+  SciPy-BA ohne Schur    sfm/bundle_adjustment.py::BundleAdjuster (TRF);
+                         Schur-Komplement nur im optionalen
+                         PyceresBundleAdjuster (SPARSE_SCHUR),
+                         Voreinstellung ist "scipy" (run_sfm.py --ba-backend)
+
+
+Offener Punkt
+-------------
+
+Der Umfang liegt bei rund 3.000 Zeichen gegenüber ca. 2.100 der Einreichung.
+Falls das Einreichungssystem ein Zeichenlimit vorgibt, ist Absatz 4 (didaktisches
+Ziel) der am ehesten kürzbare Teil - die Absätze 2 und 3 tragen die
+Reviewer-Antwort und sollten erhalten bleiben.
