@@ -65,6 +65,31 @@ vorhandenen Bilder und die gemessenen Zahlen ersetzen.
   Bildunterschrift dürfen nicht auf verschiedene Seiten fallen, Tabellen nicht mitten im
   Umbruch reißen.
 
+## Runde 3: Style Guide des Workshop-Bandes
+
+Die Vorlage liegt unter `abstract/workshop_book_styleguide_2026/` und besteht aus
+`main.tex` (XeLaTeX), `citing.bib` und den Segoe-UI-Schriftschnitten in `Fonts/`. Die
+Vorlage ist verbindlich; der PDF-Export muss sie nachbilden.
+
+**Vorgehen:** `main.tex` lesen und die Layoutparameter daraus ableiten, nicht schätzen.
+Maßgeblich sind Seitenformat und Ränder, Schriftfamilie, Grund- und Überschriftengrößen,
+Zeilenabstand, Satzart, Farbwerte, Ausrichtung der Überschriften, Aufbau des Titelkopfs,
+Auszeichnung von Abstract und Keywords, Benennung und Platzierung der Bildunterschriften,
+Tabellenstil und Zitierstil. Jede Abweichung wird begründet und im Anhang festgehalten.
+
+**Front matter:** Titel, Autoren und Zugehörigkeit übernehmen die Angaben aus der
+eingereichten Fassung `abstract/abstract_submission_v2.txt` und folgen dem Aufbau des
+Autorenblocks der Vorlage. Der Abstract des Papers wird an die eingereichte Fassung
+angeglichen, um die dort gegebenen Zusagen mit gemessenen Zahlen zu belegen. Zusagen, die
+sich nicht einlösen lassen, werden im Paper nicht wiederholt, sondern als offener Punkt
+geführt.
+
+**Inhaltlicher Abgleich:** Aussagen der eingereichten Fassung, die den eigenen Messungen
+widersprechen, werden nicht übernommen. Der Widerspruch wird stattdessen benannt und im
+Bericht an die Autorenschaft aufgeführt.
+
+**Ausgabe:** Der Export wird neu erzeugt, das PDF liegt am Ende aktualisiert vor.
+
 ## Prüfkriterien
 
 | Kriterium | Prüfung |
@@ -74,6 +99,8 @@ vorhandenen Bilder und die gemessenen Zahlen ersetzen.
 | Jede Abbildung hat eine Unterschrift | Zahl der `<figure>`-Blöcke entspricht der Zahl der Abbildungen und Tabellen |
 | Zahlen belegt | jeder Wert steht so in `EVALUATION_RESULTS.md` oder in einem Bild des Laufs |
 | PDF erzeugbar | `python paper/scripts/build_paper.py --pdf` schreibt `paper/paper_t.pdf` |
+| Layout entspricht der Vorlage | Titelkopf, Schrift, Größen, Farbe und Ausrichtung im gerenderten PDF gegen `main.tex` geprüft |
+| Bezeichner der Abbildungen | „Fig." wie in der Vorlage, kein „Abb." mehr im Text |
 
 ## Ergebnis
 

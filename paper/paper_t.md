@@ -1,37 +1,35 @@
-# Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D-Rekonstruktions-Pipeline
+# Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline
 
-**Rudolf Hoffmann, Prof. Dr.-Ing. Frank Neumann**
+Rudolf Hoffmann<sup>1</sup>, Frank Neumann<sup>1</sup>
+{: .authors}
 
-HTW Berlin (Hochschule für Technik und Wirtschaft Berlin), Wilhelminenhofstr. 75a, 12459 Berlin
-Rudolf.Hoffmann@Student.HTW-Berlin.de
+<sup>1</sup>HTW Berlin, Fachbereich 2 Informatik in Ingenieurwissenschaften, Wilhelminenhofstr. 75a, 12459 Berlin, Rudolf.Hoffmann@Student.HTW-Berlin.de, www.htw-berlin.de
+{: .affiliation}
 
----
+**Abstract:** Wie weit trägt eine selbst implementierte Photogrammetrie-Pipeline auf einem
+handelsüblichen Laptop, ohne GPU-Cluster und ohne kommerzielle Software? Der Beitrag
+beantwortet diese Frage anhand eines studentischen Implementierungsprojekts und grenzt
+dabei bewusst genau ab, was „selbst implementiert" bedeutet. Etablierte Bausteine werden
+aus Bibliotheken bezogen: SIFT-Merkmale, FLANN-Matching, die robusten Schätzer für
+Fundamental-, Essential- und Homographiematrix sowie PnP stammen aus OpenCV, der
+nichtlineare Least-Squares-Löser aus SciPy, die Poisson-Oberflächenrekonstruktion aus
+Open3D. Eigenentwicklung ist die vollständige Rekonstruktionslogik, die diese Bausteine
+erst zu einer Pipeline verbindet, samt Problemformulierung des Bundle Adjustment. Die
+Antwort auf die Frage nach der Programmiersprache lautet daher differenziert: Die
+Steuerungs- und Geometrielogik ist vollständig in Python und NumPy geschrieben, kein
+Projektbestandteil in einer anderen Sprache, während die numerisch teuren Kernels in den
+C++-Backends der genannten Bibliotheken laufen. Auf einem Datensatz mit 67 Aufnahmen und
+mitgelieferten Ground-Truth-Posen registriert die Pipeline alle Kameras und liefert eine
+formtreue Punktwolke aus 40.233 Punkten bei 1,58 px mittlerem Reprojektionsfehler. Der
+Vergleich mit der Ground Truth zeigt jedoch Schwächen, die diese pipeline-eigene Kennzahl
+nicht anzeigt: Die geschätzte Brennweite liegt 47 % neben dem wahren Wert, die
+Kameraorientierungen weichen im Median um 6,2° ab, und zwei identische Aufrufe liefern
+unterschiedliche Ergebnisse. Für jede dieser Grenzen benennt der Beitrag die Ursache im
+Code.
+{: .abstract}
 
-**Abstract:** Wie weit trägt eine selbst geschriebene Photogrammetrie-Pipeline, wenn sie
-ohne spezialisierte Hardware und ohne kommerzielle Software auf einem handelsüblichen
-Laptop läuft? Der Beitrag beantwortet diese Frage anhand eines studentischen
-Implementierungsprojekts. Die Pipeline ist vollständig in Python geschrieben und
-verarbeitet eine Bildsequenz in mehreren Stufen: Detektion lokaler Merkmale (SIFT),
-paarweises Matching (FLANN), robuste geometrische Verifikation, inkrementelle
-Kamerarekonstruktion (PnP, Triangulation) und Bundle Adjustment. Optional entstehen
-zusätzlich eine dichte Punktwolke und eine Mesh-Oberfläche. Die numerischen Grundbausteine
-stammen aus etablierten Bibliotheken (OpenCV, SciPy, Open3D); die gesamte Ablauflogik,
-die Buchführung über Punkte und Beobachtungen sowie das Fehlermodell des Bundle
-Adjustment sind eigener Code. Abschnitt 2.3 trennt beides explizit auf. Ein zweites Ziel
-des Projekts ist die vollständige Sichtbarkeit aller Zwischenergebnisse: Jede Stufe
-schreibt Diagnosebilder, von den erkannten Merkmalen über die verifizierten
-Korrespondenzen bis zur schrittweise wachsenden Punktwolke. Auf einem Datensatz mit
-67 Aufnahmen registriert die Pipeline alle Kameras und liefert eine formtreue Punktwolke
-aus 40.233 Punkten. Der Vergleich mit den mitgelieferten Ground-Truth-Posen zeigt jedoch
-Schwächen, die der pipeline-eigene Reprojektionsfehler nicht anzeigt: Die geschätzte
-Brennweite liegt 47 % neben dem wahren Wert, die Kameraorientierungen weichen im Median
-um 6,2° ab, und zwei identische Aufrufe liefern unterschiedliche Ergebnisse. Der Beitrag
-benennt für jede dieser Grenzen die Ursache im Code.
-
-**Keywords:** Structure-from-Motion; Photogrammetrie; Python; Punktwolke; Bundle
-Adjustment; Visualisierung; Studierendenprojekt
-
----
+**Keywords:** Structure-from-Motion; Photogrammetrie; Python; Punktwolke; Bundle Adjustment; Visualisierung; Studierendenprojekt
+{: .keywords}
 
 ## 1  Einleitung
 
@@ -44,7 +42,7 @@ Bilddaten.
 
 ![Pipeline-Übersicht](figures/pipeline_overview.svg)
 
-**Abb. 1:** Übersicht der Verarbeitungskette von den Eingabebildern über Merkmale,
+**Fig. 1:** Übersicht der Verarbeitungskette von den Eingabebildern über Merkmale,
 Matching, geometrische Verifikation, inkrementelle Rekonstruktion und Bundle Adjustment
 bis zur Punktwolke und optional zum Mesh. Das Diagramm bildet den roten Faden für
 Abschnitt 3.
@@ -124,7 +122,7 @@ in der Strategie, nicht in der Sprache.
 
 ## 3  Methoden
 
-Die Pipeline gliedert sich in die sechs Stufen aus Abb. 1. Alle Abbildungen dieses
+Die Pipeline gliedert sich in die sechs Stufen aus Fig. 1. Alle Abbildungen dieses
 Abschnitts stammen aus einem einzigen Lauf über 67 Bilder (Lauf B, siehe Abschnitt 4.1),
 zeigen also durchgehend dieselbe Rekonstruktion.
 
@@ -138,21 +136,21 @@ auf der CPU. Beide Pfade liefern denselben Ausgabe-Kontrakt.
 
 ![SIFT-Keypoints](figures/run_b/abb03a_sift_keypoints.png)
 
-**Abb. 2:** 9.126 SIFT-Merkmale auf Bild 00044. Die Farbe kodiert den Detektionsindex und
+**Fig. 2:** 9.126 SIFT-Merkmale auf Bild 00044. Die Farbe kodiert den Detektionsindex und
 dient als Näherung für die Stärke der Detektorantwort. Die Merkmale konzentrieren sich auf
 die genoppte Oberfläche der Statue, während die glatte Wand links und die einfarbige
 Tischplatte rechts nahezu leer bleiben.
 
 ![Merkmalsdichte](figures/run_b/abb03b_feature_density.png)
 
-**Abb. 3:** Dichte-Heatmap desselben Bildes, links über dem Bild und rechts isoliert. Die
+**Fig. 3:** Dichte-Heatmap desselben Bildes, links über dem Bild und rechts isoliert. Die
 Dichte fällt zum Objektrand hin ab und ist auf dem strukturlosen Hintergrund praktisch
 null. Diese Abhängigkeit von der Textur ist die Voraussetzung, deren Fehlen die Pipeline
 in Abschnitt 5 scheitern lässt.
 
 Über alle 67 Bilder entstehen 545.327 Merkmale, im Mittel 8.139 pro Bild bei einem Minimum
 von 1.939 und einem Maximum von 12.001. Das Maximum liegt exakt am gesetzten Limit, bei
-sechs Bildern begrenzt also der Parameter und nicht die Szene (Abb. A1 im Anhang).
+sechs Bildern begrenzt also der Parameter und nicht die Szene (Fig. A1 im Anhang).
 
 ### 3.2  Feature Matching
 
@@ -165,7 +163,7 @@ Bildpaare.
 
 ![Match-Visualisierung](figures/run_b/abb04a_matches.png)
 
-**Abb. 4:** Korrespondenzen für das Paar 00039 zu 00058, gezeichnet als Zufallsstichprobe
+**Fig. 4:** Korrespondenzen für das Paar 00039 zu 00058, gezeichnet als Zufallsstichprobe
 von 200 der 1.347 Rohzuordnungen. Grün markiert die 803 geometrisch verifizierten Inlier
 (59,6 %), rot die 544 verworfenen Zuordnungen. Die roten Linien fächern sichtbar auf, weil
 die repetitive Noppenstruktur der Statue Verwechslungen zwischen ähnlichen, aber
@@ -174,18 +172,21 @@ geometrische Verifikation aus Abschnitt 3.3 wird unverzichtbar.
 
 ### 3.3  Geometrische Verifikation
 
-Jedes Bildpaar durchläuft drei Filter. Zuerst normiert eine Hartley-Transformation die
+Jedes Bildpaar durchläuft vier Filter. Zuerst normiert eine Hartley-Transformation die
 Pixelkoordinaten, was die anschließende Schätzung numerisch stabilisiert. Danach schätzt
 `USAC_MAGSAC` robust die Fundamentalmatrix, so dass nur geometrisch konsistente Zuordnungen
-als Inlier überleben. Zuletzt wird daraus die Essential-Matrix abgeleitet und über die
+als Inlier überleben. Der dritte Filter prüft nach dem Kriterium von Torr, ob eine
+Homographie dieselben Inlier ebenso gut erklärt; ab einem Anteil von 85 % gilt das Paar als
+planar und wird verworfen, weil sich aus einer solchen Fundamentalmatrix keine belastbare
+Rotation ableiten lässt. Zuletzt wird die Essential-Matrix bestimmt und über die
 Cheiralitätsbedingung in die relative Kamerapose zerlegt. Ein Union-Find-Verfahren prüft
 anschließend die Zusammenhangskomponenten des Szenengraphen und verwirft alles außer der
 größten. Im Referenzlauf überstehen 524 der 2.211 Paare die Verifikation, und alle
-67 Bilder liegen in einer einzigen Komponente (Abb. A3).
+67 Bilder liegen in einer einzigen Komponente (Fig. A3).
 
 ![Epipolarlinien](figures/run_b/abb05_epipolar.png)
 
-**Abb. 5:** Epipolargeometrie für dasselbe Bildpaar. Zusammengehörige Punkte und Linien
+**Fig. 5:** Epipolargeometrie für dasselbe Bildpaar. Zusammengehörige Punkte und Linien
 sind gleichfarbig gezeichnet: Zu jedem Punkt im einen Bild gehört die gleichfarbige
 Epipolarlinie im anderen. Dass die Punkte auf ihren Linien liegen, belegt anschaulich die
 Qualität der geschätzten Fundamentalmatrix. Im linken Bild schneiden sich alle Linien unten
@@ -207,7 +208,7 @@ wenn Tiefe, Triangulationswinkel und Reprojektionsfehler die Schwellen einhalten
 | ![Nach 35 Schritten](figures/run_b/abb06c_step035_crop.png) | ![Nach 66 Schritten](figures/run_b/abb06d_step066_crop.png) |
 | Schritt 035: 36 Kameras, 31.734 Punkte | Schritt 066: 67 Kameras, 46.883 Punkte |
 
-**Abb. 6:** Vier Momentaufnahmen desselben Laufs in der Seitenansicht, mit den bereits
+**Fig. 6:** Vier Momentaufnahmen desselben Laufs in der Seitenansicht, mit den bereits
 registrierten Kameras als nummerierte Marker und der Punktwolke in Weiß. Das Startpaar
 besteht aus den Bildern 14 und 61 und liefert 3.348 Punkte aus einem einzigen
 Triangulationsschritt. Nach zehn Schritten stehen elf Kameras, nach 35 Schritten ist die
@@ -220,7 +221,7 @@ Kalibriermarken, die nicht zum Objekt gehören.
 
 ![Kameraposen](figures/run_b/abb06e_camera_poses_final.png)
 
-**Abb. 7:** Alle 67 registrierten Kameraposen mit Position und Achsenkreuz, dazu die
+**Fig. 7:** Alle 67 registrierten Kameraposen mit Position und Achsenkreuz, dazu die
 Punktwolke zum Zeitpunkt des Renderings. Die Kameras verteilen sich flächig um das Objekt
 statt auf einer sauberen Bahn. Das ist ein erster visueller Hinweis auf die in
 Abschnitt 4.3 gemessene Posenungenauigkeit.
@@ -237,7 +238,7 @@ falls sich der Fehler um mehr als den Faktor 1,5 verschlechtert.
 
 ![BA-Konvergenz](figures/run_b/abb07a_ba_convergence.png)
 
-**Abb. 8:** Vierzehn BA-Runden des Referenzlaufs. Links der Reprojektions-RMSE vor (rot)
+**Fig. 8:** Vierzehn BA-Runden des Referenzlaufs. Links der Reprojektions-RMSE vor (rot)
 und nach (blau) jeder Runde, annotiert mit der jeweiligen Kamerazahl C, rechts die
 Punktzahl vor und nach der Optimierung.
 
@@ -260,7 +261,7 @@ während der Median bei 0,84 px liegt.
 
 ![Punkt-Lifecycle](figures/run_b/abb07b_point_lifecycle.png)
 
-**Abb. 9:** Links die Zahl der Beobachtungen pro 3D-Punkt bei einer mittleren Tracklänge
+**Fig. 9:** Links die Zahl der Beobachtungen pro 3D-Punkt bei einer mittleren Tracklänge
 von 2,7, mit einem deutlichen Übergewicht bei genau zwei Beobachtungen. Mehr als 27.000
 der rund 40.000 Punkte stammen also aus einem einzigen Bildpaar und sind geometrisch kaum
 abgesichert. Rechts der mittlere Reprojektionsfehler über der Beobachtungszahl: Punkte mit
@@ -316,7 +317,7 @@ Abschnitt 3 stammen aus Lauf B.
 
 ![Pipeline-Zusammenfassung Lauf B](figures/run_b/abb12_pipeline_summary.png)
 
-**Abb. 10:** Zusammenfassung von Lauf B mit Kennzahlentabelle, Match-Matrix,
+**Fig. 10:** Zusammenfassung von Lauf B mit Kennzahlentabelle, Match-Matrix,
 BA-Konvergenz und Draufsicht auf Punktwolke und Kamerazentren (gelb). In der Draufsicht
 bilden die Kamerazentren zwei getrennte Gruppen, und die Punktwolke liegt seitlich von
 ihnen. Die rekonstruierte Aufnahmegeometrie entspricht damit nicht der gleichmäßigen
@@ -330,7 +331,7 @@ Punkten.
 
 ![Punktwolke, sechs Ansichten](figures/run_b/abb09_pointcloud_6views.png)
 
-**Abb. 11:** Kolorierte Punktwolke aus sechs orthografischen Richtungen. Die Statue ist in
+**Fig. 11:** Kolorierte Punktwolke aus sechs orthografischen Richtungen. Die Statue ist in
 Seiten-, Auf- und Untersicht klar als Figur mit Kopf, Rumpf und Sockel lesbar. Ebenso klar
 sind die Schwächen: In Front- und Rückansicht streuen Ausreißer um das Objekt, und in
 Auf- und Untersicht zieht sich ein schmales Punktband schräg durch den Raum. Dabei handelt
@@ -375,7 +376,7 @@ das BA hat nichts mehr zu gewinnen.
 
 Daraus folgt die methodisch wichtigste Aussage dieses Beitrags. Die pipeline-eigene
 Qualitätskennzahl, der Reprojektionsfehler, sieht mit 1,6 px genau dann gut aus, wenn die
-Geometrie um mehr als 6° verdreht ist. Abb. 8 zeigt denselben Sachverhalt von der anderen
+Geometrie um mehr als 6° verdreht ist. Fig. 8 zeigt denselben Sachverhalt von der anderen
 Seite, denn dort konvergiert das BA zufrieden, während der Fehler steigt. Wer allein gegen
 den Reprojektionsfehler optimiert, optimiert also gegen eine Metrik, die diesen Fehlermodus
 prinzipiell nicht sehen kann. Erst der Vergleich gegen die Ground Truth macht ihn sichtbar.
@@ -391,9 +392,9 @@ allen vier relevanten Stellen fest gesetzt, weshalb nur die OpenCV-Seite betroff
 
 ![Pipeline-Zusammenfassung Lauf A](figures/run_a/abb13a_pipeline_summary_lauf_a.png)
 
-**Abb. 12:** Dieselbe Zusammenfassung für Lauf A, also identischer Befehl auf identischen
+**Fig. 12:** Dieselbe Zusammenfassung für Lauf A, also identischer Befehl auf identischen
 Bildern, einen Tag früher ausgeführt. Kennzahlen und Kameraverteilung stimmen im Vergleich
-mit Abb. 10 weitgehend überein, die BA-Konvergenzkurve verläuft jedoch sichtbar anders und
+mit Fig. 10 weitgehend überein, die BA-Konvergenzkurve verläuft jedoch sichtbar anders und
 endet bei 10,2 px statt bei 10,9 px. Bei 67 Bildern ist der Effekt also gedämpft, aber
 nicht verschwunden.
 
@@ -409,17 +410,27 @@ nicht verschwunden.
 
 ![Skalierung](figures/abb11_skalierung.png)
 
-**Abb. 13:** Links die Gesamtlaufzeit und der Matching-Anteil über der Bildzahl, verglichen
+**Fig. 13:** Links die Gesamtlaufzeit und der Matching-Anteil über der Bildzahl, verglichen
 mit einer quadratischen Referenzkurve. Rechts der Anteil der einzelnen Stufen an der
 Gesamtlaufzeit. Die Kosten pro Bildpaar bleiben mit 0,505 s, 0,497 s und 0,469 s praktisch
 konstant, weshalb die Gesamtzeit exakt der quadratisch wachsenden Paarzahl folgt. Der
 Anteil des Matchings steigt von 66 % bei 6 Bildern auf 91 % bei 67 Bildern, während das
 Bundle Adjustment mit 38,2 s nicht ins Gewicht fällt.
 
-Damit korrigiert die Messung eine verbreitete Erwartung: Nicht das globale Bundle
-Adjustment, sondern das erschöpfende Matching bildet auf diesem Datensatz die
-Skalierungsgrenze. Hochgerechnet bräuchten 200 Bilder allein für das Matching etwa
-2,6 Stunden.
+Dieses Ergebnis widerspricht der Erwartung, mit der das Projekt in die Messung gegangen
+ist, und wird hier bewusst als eigenständiger Befund berichtet. Die Vermutung lautete, das
+globale Bundle Adjustment werde zum Engpass, weil der voreingestellte SciPy-Löser das
+Schur-Komplement nicht ausnutzt; ein Löser mit dieser Struktur steht nur im optionalen
+pyceres-Pfad zur Verfügung, der auf der Messmaschine nicht installiert ist. Der
+Code-Befund stimmt, die daraus abgeleitete Erwartung an die Laufzeit jedoch nicht. Das
+Bundle Adjustment wächst zwar deutlich schneller als linear, nämlich von 1,2 s bei
+13 registrierten Kameras auf 38,2 s bei 67, also um etwa das Zweiunddreißigfache bei gut
+fünffacher Kamerazahl. Es startet aber von einem so kleinen Betrag, dass es selbst am
+oberen Ende der Messreihe nur 3,4 % der Laufzeit ausmacht, während das erschöpfende
+Matching bei 91 % liegt. Beide Kurven würden sich erst weit außerhalb des vermessenen
+Bereichs schneiden. Für alle hier realistisch verarbeitbaren Datensatzgrößen ist damit
+das Matching die Skalierungsgrenze, und Optimierungsarbeit gehört zuerst dorthin.
+Hochgerechnet bräuchten 200 Bilder allein für das Matching etwa 2,6 Stunden.
 
 Zwei weitere Messwerte runden das Bild ab. Die Zwischenspeicherung der Merkmale und Matches
 beschleunigt einen Wiederholungslauf um den Faktor 19,9, was die tägliche Arbeit spürbar
@@ -432,9 +443,9 @@ dieses Verhalten.
 
 Der Visualizer schreibt 19 Typen von Diagnosebildern ohne Bildschirm direkt auf die Platte,
 auf Wunsch als vektorielles PDF mit 300 dpi. Sämtliche Abbildungen der Abschnitte 3 und 4
-sind mit Ausnahme des Übersichtsdiagramms in Abb. 1 Nebenprodukte eines einzigen Laufs mit
+sind mit Ausnahme des Übersichtsdiagramms in Fig. 1 Nebenprodukte eines einzigen Laufs mit
 `--visualize`. Für die Fehlersuche war dieser Zugang entscheidend, denn die steigende
-Kurve in Abb. 8 und das Übergewicht der Zweifach-Tracks in Abb. 9 haben die in
+Kurve in Fig. 8 und das Übergewicht der Zweifach-Tracks in Fig. 9 haben die in
 Abschnitt 4.3 vermessenen Defekte überhaupt erst sichtbar gemacht.
 
 ## 5  Diskussion
@@ -459,27 +470,39 @@ bis zu 57 %. Solange dieser Punkt offen ist, lässt sich der Nutzen jeder weiter
 Verbesserung nicht sauber messen, denn jede Änderung verschwindet im Rauschen zwischen zwei
 Läufen.
 
-**Die Skalierungsgrenze liegt beim Matching, nicht beim Bundle Adjustment.** Erschöpfendes
-Matching kostet quadratisch viele Paarvergleiche und stellt bei 67 Bildern 91 % der
-Laufzeit. Die naheliegende Abhilfe über sequenzielles Matching halbiert zwar die Zeit,
+**Die Skalierungsgrenze liegt beim Matching, nicht beim Bundle Adjustment.** Das Bundle
+Adjustment wächst zwar schneller als linear mit der Kamerazahl, bleibt aber selbst bei
+67 Bildern bei 3,4 % der Laufzeit, während erschöpfendes Matching quadratisch viele
+Paarvergleiche kostet und 91 % beansprucht (Abschnitt 4.5). Die naheliegende Abhilfe über sequenzielles Matching halbiert zwar die Zeit,
 lässt die Rekonstruktion auf diesem Datensatz aber auf 4 von 20 Kameras zusammenbrechen.
-Der Grund ist in Abb. A2 im Anhang sichtbar: Die Match-Matrix ist nicht bandförmig, also
+Der Grund ist in Fig. A2 im Anhang sichtbar: Die Match-Matrix ist nicht bandförmig, also
 entsprechen aufeinanderfolgende Dateinamen keinen aufeinanderfolgenden Blickwinkeln. Die
 inhaltsbasierten Alternativen über Bildretrieval benötigen PyTorch, das auf der
 Messmaschine fehlt.
 
 **Die Tracks sind zu kurz.** Bei einer mittleren Tracklänge von 2,6 bis 2,7 stammt die
 Mehrzahl der Punkte aus nur zwei Bildern und ist damit geometrisch schwach abgesichert, was
-Abb. 9 als Hauptquelle der Fehlerstreuung ausweist. Etwa 8 % der Punkte sind zudem exakte
+Fig. 9 als Hauptquelle der Fehlerstreuung ausweist. Etwa 8 % der Punkte sind zudem exakte
 Duplikate, also Tracks, die hätten verschmelzen müssen. Die dafür vorgesehene Option zeigt
 im Test keinen messbaren Nutzen.
 
+**Ohne Schleifenschluss akkumuliert die Rekonstruktion Drift.** Die Registrierung hängt
+jede neue Kamera an den bereits bestehenden Verbund an, so dass sich kleine Posenfehler
+über den Rundgang aufsummieren. Genau dieses Verhalten zeigt die steigende Kurve in
+Fig. 8: Der Fehler wächst mit der Zahl der eingefügten Kameras, statt sich zu
+stabilisieren. Eine Schleifenschluss-Erkennung ist zwar vorgesehen, setzt aber
+inhaltsbasiertes Retrieval oder den Vokabularbaum voraus und war auf der Messmaschine
+nicht verfügbar.
+
 **Texturarme und planare Szenen** bleiben die theoretisch erwartete Grenze. SIFT findet
-dort zu wenige Merkmale, wobei Abb. 3 die leeren Regionen bereits auf einer gutmütigen
-Szene zeigt. Bei einer dominanten Ebene ist die Fundamentalmatrix schlecht konditioniert,
-so dass die Initialisierung instabil wird. Die aktuelle Implementierung erkennt planare
-Paare und überspringt sie, statt sie über eine Homographie zu behandeln. Ein falsches
-Ergebnis wird dadurch vermieden, die Daten gehen aber verloren.
+dort zu wenige Merkmale, wobei Fig. 3 die leeren Regionen bereits auf einer gutmütigen
+Szene zeigt. Bei einer dominanten Ebene lässt sich die Korrespondenz ebenso gut durch eine
+Homographie erklären, weshalb die daraus abgeleitete Essential-Matrix keine belastbare
+Rotation mehr liefert. Die Implementierung erkennt diesen Fall über eine Konkurrenz
+zwischen Homographie und Fundamentalmatrix nach dem Kriterium von Torr: Erklärt die
+Homographie mehr als 85 % der Inlier, wird das Bildpaar verworfen. Ein falsches Ergebnis
+wird dadurch vermieden, der Bildgraph verliert aber Kanten und zerfällt im Extremfall,
+statt die Ebene über die Homographie zu behandeln.
 
 **Die Reife der Randfälle bleibt hinter der Kernfunktion zurück.** Von dreizehn geprüften
 Fehlersituationen behandelt die Pipeline acht sauber. Ein einzelnes unlesbares Bild bricht
@@ -523,16 +546,17 @@ lernbasierte Matching-Verfahren für schwierige Aufnahmesituationen.
 
 ## Literatur
 
-[1] R. Hartley, A. Zisserman, *Multiple View Geometry in Computer Vision*, 2. Aufl.,
-Cambridge University Press, 2003.
+[1] R. Hartley and A. Zisserman, *Multiple View Geometry in Computer Vision*, 2nd ed.
+Cambridge, U.K.: Cambridge University Press, 2003.
 
-[2] J. L. Schönberger, J.-M. Frahm, „Structure-from-Motion Revisited", *CVPR*, 2016.
+[2] J. L. Schönberger and J.-M. Frahm, "Structure-from-motion revisited," in *Proc. IEEE
+Conf. Computer Vision and Pattern Recognition (CVPR)*, 2016, pp. 4104-4113.
 
-[3] Q.-Y. Zhou, J. Park, V. Koltun, „Open3D: A Modern Library for 3D Data Processing",
+[3] Q.-Y. Zhou, J. Park, and V. Koltun, "Open3D: A modern library for 3D data processing,"
 arXiv:1801.09847, 2018.
 
-[4] D. G. Lowe, „Distinctive Image Features from Scale-Invariant Keypoints", *IJCV*,
-60(2), 2004.
+[4] D. G. Lowe, "Distinctive image features from scale-invariant keypoints," *International
+Journal of Computer Vision*, vol. 60, no. 2, pp. 91-110, 2004.
 
 ---
 
@@ -540,23 +564,23 @@ arXiv:1801.09847, 2018.
 
 ![Merkmalsstatistik](figures/run_b/abb03c_feature_statistics.png)
 
-**Abb. A1:** Verteilung der Merkmalszahl über alle 67 Bilder mit insgesamt 545.327
+**Fig. A1:** Verteilung der Merkmalszahl über alle 67 Bilder mit insgesamt 545.327
 Keypoints, im Mittel 8.139 pro Bild. Kein Bild bleibt unter 100 Merkmalen.
 
 ![Match-Matrix](figures/run_b/abb04b_match_matrix.png)
 
-**Abb. A2:** Inlier-Matrix aller Bildpaare. Die Matrix ist dünn besetzt, einzelne Paare
+**Fig. A2:** Inlier-Matrix aller Bildpaare. Die Matrix ist dünn besetzt, einzelne Paare
 erreichen über 3.000 Inlier. Die Struktur ist nicht bandförmig, weshalb sequenzielles
 Matching auf diesem Datensatz scheitert.
 
 ![Konnektivitätsgraph](figures/run_b/abb04c_connectivity_graph.png)
 
-**Abb. A3:** Szenengraph mit 67 Knoten und 524 Kanten, eingefärbt nach Inlier-Zahl. Alle
+**Fig. A3:** Szenengraph mit 67 Knoten und 524 Kanten, eingefärbt nach Inlier-Zahl. Alle
 Bilder liegen in einer einzigen Zusammenhangskomponente.
 
 ![Reprojektionsfehler](figures/run_b/abb07c_reprojection_errors.png)
 
-**Abb. A4:** Reprojektionsfehler als überhöhte Pfeile auf Bild 00037, mit 102 Punkten unter
+**Fig. A4:** Reprojektionsfehler als überhöhte Pfeile auf Bild 00037, mit 102 Punkten unter
 1 px (grün), 77 Punkten zwischen 1 px und 2 px (gelb) und 84 Punkten über 2 px (rot). Die
 roten Pfeile häufen sich am Objektrand und auf der Tischplatte, die grünen im gut
 texturierten Zentrum. Der Fehler ist damit räumlich strukturiert und nicht zufällig
@@ -571,7 +595,7 @@ referenziert.
 **Lauf B**, 67 Bilder, SIFT auf der CPU, 12.000 Merkmale je Bild, Ratio 0,70, erschöpfendes
 Matching, dichte Rekonstruktion aktiviert, Quelle `sfm_visualization_20260803_102114`:
 
-| Abb. | Datei | Original |
+| Fig. | Datei | Original |
 |---|---|---|
 | 2 | `figures/run_b/abb03a_sift_keypoints.png` | `01_features/features_00044._c.png` |
 | 3 | `figures/run_b/abb03b_feature_density.png` | `01_features/density_00044._c.png` |
@@ -589,22 +613,35 @@ Matching, dichte Rekonstruktion aktiviert, Quelle `sfm_visualization_20260803_10
 | A4 | `figures/run_b/abb07c_reprojection_errors.png` | `03_reconstruction/reprojection_errors_00037._c.png` |
 
 **Lauf A**, identische Konfiguration, Quelle `sfm_visualization_20260802_153526`:
-Abb. 12 aus `00_summary/pipeline_summary.png`.
+Fig. 12 aus `00_summary/pipeline_summary.png`.
 
-**Selbst erzeugt:** Abb. 1 als Vektorgrafik (`figures/pipeline_overview.svg`), Abb. 13 über
+**Selbst erzeugt:** Fig. 1 als Vektorgrafik (`figures/pipeline_overview.svg`), Fig. 13 über
 `paper/scripts/plot_scaling.py` aus den Messwerten in Tab. 4.
 
 **Offene Punkte.** Der quantitative Vergleich mit COLMAP fehlt, weil auf der Messmaschine
-kein COLMAP-Binary installiert ist; die Werkzeuge dafür (`paper/scripts/compare_ply.py`
-für den Punktwolkenvergleich und `paper/scripts/benchmark.py` für die Kennzahlentabelle)
-sind vorhanden und laufen unmittelbar nach der Installation. Ebenfalls offen ist eine
-eigene Aufnahmeserie für den planaren oder texturarmen Grenzfall aus Abschnitt 5, die der
-Buddha-Datensatz nicht abbilden kann.
+kein COLMAP-Binary installiert ist. Die Werkzeuge dafür sind vorhanden und laufen
+unmittelbar nach der Installation: `paper/scripts/compare_ply.py` für den
+Punktwolkenvergleich und `paper/scripts/benchmark.py` für die Kennzahlentabelle. Das
+Vorgehen ist Schritt für Schritt in `paper/COLMAP_HOWTO.md` beschrieben. Ebenfalls offen
+ist eine eigene Aufnahmeserie für den planaren oder texturarmen Grenzfall aus Abschnitt 5,
+die der Buddha-Datensatz nicht abbilden kann.
+
+**Umsetzung des Style Guide.** Das Layout folgt
+`abstract/workshop_book_styleguide_2026/main.tex`: A4 mit 2,5 cm Rand, Segoe UI, Fließtext
+9 pt bei 14,4 pt Zeilenabstand im Blocksatz, Titel 12 pt fett zentriert, Autorenblock
+10 pt zentriert, Überschriften zentriert in Fett und in GFaI-Blau (#23355D), ebenso die
+Marken „Abstract:" und „Keywords:", Abbildungen zentriert auf Satzspiegelbreite mit
+Bildunterschrift darunter, Tabellen im booktabs-Stil ohne Vertikallinien, Literatur im
+IEEE-Format und keine Seitenzahlen. Die Abbildungen heißen entsprechend der Vorlage
+„Fig.". Zwei bewusste Abweichungen: Die Bildhöhe ist auf 112 mm begrenzt, damit einzelne
+quadratische Diagramme keine ganze Seite belegen, und die Kapitelüberschrift der
+Literatur lautet „Literatur" statt „References", weil der Beitrag deutschsprachig ist.
 
 **Hinweise für die Druckfassung.** Die eingebundenen Bilder stammen aus Läufen mit
 Standardauflösung. Für den Druck lässt sich derselbe Lauf mit `--viz-format pdf` und
 `--viz-dpi 300` wiederholen, wobei die Dateinamen gleich bleiben. Wegen der fehlenden
 Reproduzierbarkeit ändern sich dabei die Zahlenwerte in den Bildern leicht, so dass die
-Bildunterschriften nachzuziehen sind. Abb. 3 ist nicht seitenverhältnistreu, und Abb. A3
-hat mit 8025 × 1185 Pixel ein für den Satzspiegel ungünstiges Format; beide sind Kandidaten
-für eine Nachbearbeitung.
+Bildunterschriften nachzuziehen sind. Fig. 3 ist nicht seitenverhältnistreu, Fig. A3 hat
+mit 8025 × 1185 Pixel ein für den Satzspiegel ungünstiges Format, und Fig. 11 trägt viel
+Weißraum zwischen den sechs Teilansichten; alle drei gewinnen durch eine Nachbearbeitung
+im Visualizer.

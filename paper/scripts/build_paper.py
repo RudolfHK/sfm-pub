@@ -40,96 +40,113 @@ BROWSERS = [
 ]
 
 CSS = """
-@page { size: A4; margin: 20mm 18mm 22mm 18mm; }
+/* Layout nach abstract/workshop_book_styleguide_2026/main.tex
+   A4, Rand 2,5 cm, Segoe UI, Fliesstext 9 pt / 14,4 pt, Ueberschriften
+   zentriert in GFaI-Blau #23355D, keine Seitenzahlen. */
 
-:root { --ink:#16191d; --muted:#4a5058; --rule:#c8ccd2; --accent:#1f6f8b; }
+@page { size: A4; margin: 25mm; }
+
+:root { --ink:#000000; --blue:#23355D; --rule:#000000; }
 
 * { box-sizing: border-box; }
 
 body {
-  font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-  font-size: 11pt; line-height: 1.55; color: var(--ink);
-  margin: 0 auto; padding: 32px 28px 80px; max-width: 190mm; background: #fff;
+  font-family: "Segoe UI", "Segoe UI Web", Frutiger, "Helvetica Neue", Arial, sans-serif;
+  font-size: 9pt; line-height: 14.4pt; color: var(--ink);
+  margin: 0 auto; padding: 25mm 0 40mm; max-width: 160mm; background: #fff;
+  text-align: justify; hyphens: auto;
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 
-h1, h2, h3 {
-  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.25; color: var(--ink);
+/* ---------- Titelkopf -------------------------------------------------- */
+h1 {
+  font-size: 12pt; line-height: 14pt; font-weight: 700; color: #000;
+  text-align: center; margin: 0 0 9.5pt; hyphens: none;
+}
+p.authors {
+  font-size: 10pt; line-height: 14.4pt; text-align: center; margin: 0 0 2pt;
+}
+p.affiliation {
+  font-size: 10pt; line-height: 14.4pt; text-align: center; margin: 0 0 9pt;
+}
+p.abstract { margin: 9pt 0 0; }
+p.abstract > strong:first-child,
+p.keywords > strong:first-child {
+  font-size: 10pt; font-weight: 700; color: var(--blue);
+}
+p.keywords { text-align: center; margin: 15pt 0 0; }
+
+/* ---------- Ueberschriften --------------------------------------------- */
+h2, h3 {
+  font-size: 10pt; line-height: 12pt; font-weight: 700; color: var(--blue);
+  text-align: center; hyphens: none;
   break-after: avoid; page-break-after: avoid;
 }
-h1 { font-size: 19pt; margin: 0 0 .5em; }
-h2 { font-size: 14pt; margin: 1.9em 0 .6em; padding-bottom: .2em;
-     border-bottom: 1px solid var(--rule); }
-h3 { font-size: 11.5pt; margin: 1.4em 0 .4em; }
+h2 { margin: 22pt 0 8pt; }
+h3 { margin: 14pt 0 6pt; }
 
-p { margin: 0 0 .75em; text-align: justify; hyphens: auto; }
-
-hr { border: 0; border-top: 1px solid var(--rule); margin: 1.6em 0; }
-
-a { color: var(--accent); text-decoration: none; }
+/* ---------- Fliesstext -------------------------------------------------- */
+p { margin: 0 0 7pt; }
+hr { border: 0; border-top: .5pt solid #999; margin: 12pt 0; }
+a { color: var(--blue); text-decoration: none; }
+strong { font-weight: 700; }
 
 code, kbd {
-  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
-  font-size: .88em; background: #f1f3f5; padding: 0 3px; border-radius: 3px;
+  font-family: Consolas, "Courier New", monospace; font-size: 8.5pt;
+  background: #f2f3f5; padding: 0 2px; border-radius: 2px;
 }
 
-blockquote {
-  margin: 1em 0; padding: .6em 1em; border-left: 3px solid var(--accent);
-  background: #f6f9fb; color: var(--muted);
-}
+ul, ol { margin: 0 0 7pt; padding-left: 14pt; }
+li { margin-bottom: 2pt; }
 
-ul, ol { margin: 0 0 .9em; padding-left: 1.4em; }
-li { margin-bottom: .3em; }
-
-/* ---------- Abbildungen ---------------------------------------------- */
+/* ---------- Abbildungen ------------------------------------------------- */
 figure {
-  margin: 1.4em 0; text-align: center;
+  margin: 12pt 0; text-align: center;
   break-inside: avoid; page-break-inside: avoid;
 }
-figure img { max-width: 100%; height: auto; }
+figure img { max-width: 100%; max-height: 112mm; width: auto; height: auto; }
 figcaption {
-  font-size: 9.5pt; line-height: 1.45; text-align: justify;
-  margin-top: .55em; color: var(--muted);
+  font-size: 9pt; line-height: 12pt; text-align: justify;
+  margin-top: 3pt; color: var(--ink);
 }
-figcaption strong { color: var(--ink); }
+figcaption strong:first-child { color: var(--ink); }
 
-/* Bildraster (z. B. die vier Rekonstruktionsschritte) */
+/* Bildraster (die vier Rekonstruktionsschritte) */
 figure.grid table { width: 100%; border-collapse: collapse; }
 figure.grid table td, figure.grid table th {
-  border: 0; padding: 3px 6px; vertical-align: middle;
-  text-align: center; font-size: 9pt; color: var(--muted);
+  border: 0; padding: 2pt 4pt; vertical-align: middle;
+  text-align: center; font-size: 8.5pt;
 }
 figure.grid table tbody tr { background: transparent; }
-figure.grid table img { max-width: 100%; }
+figure.grid table img { max-width: 100%; max-height: 76mm; }
+figure.tab { margin: 10pt 0; }
 
-/* Tabelle samt Unterschrift zusammenhalten */
-figure.tab { margin: 1.2em 0; }
-figure.tab figcaption { text-align: justify; }
-
-/* ---------- Tabellen -------------------------------------------------- */
+/* ---------- Tabellen im booktabs-Stil ----------------------------------- */
 table {
-  width: 100%; border-collapse: collapse; font-size: 9.5pt;
-  margin: .4em 0 .3em; break-inside: avoid; page-break-inside: avoid;
+  width: 100%; border-collapse: collapse; font-size: 8.5pt; line-height: 11pt;
+  margin: 4pt 0 3pt; break-inside: avoid; page-break-inside: avoid;
 }
 th, td {
-  border: 1px solid var(--rule); padding: 4px 7px; text-align: left;
-  vertical-align: top;
+  border: 0; border-bottom: .4pt solid #b9bec6;
+  padding: 3pt 5pt; text-align: left; vertical-align: top;
 }
-thead th { background: #eef1f4; font-weight: 600; }
-tbody tr:nth-child(even) { background: #fafbfc; }
+thead th {
+  border-top: 1pt solid var(--ink); border-bottom: .6pt solid var(--ink);
+  font-weight: 700; background: transparent;
+}
+tbody tr:last-child td { border-bottom: 1pt solid var(--ink); }
+figure.grid table thead th, figure.grid table tbody tr:last-child td { border: 0; }
 
-/* ---------- Bildschirm-Hinweis --------------------------------------- */
+/* ---------- Bildschirm-Hinweis ------------------------------------------ */
 .hint {
-  font-family: "Segoe UI", Arial, sans-serif; font-size: 9.5pt;
-  background: #fff8e6; border: 1px solid #f0d9a0; border-radius: 6px;
-  padding: 10px 14px; margin-bottom: 28px; color: #5c4a1a;
+  font-size: 8.5pt; line-height: 12pt; text-align: left;
+  background: #fff8e6; border: 1px solid #f0d9a0; border-radius: 4px;
+  padding: 8px 12px; margin-bottom: 24px; color: #5c4a1a;
 }
 
 @media print {
-  body { padding: 0; max-width: none; font-size: 10.5pt; }
+  body { padding: 0; max-width: none; }
   .hint { display: none; }
-  h2 { margin-top: 1.4em; }
   a { color: inherit; }
 }
 """
@@ -141,7 +158,7 @@ HINT = (
     "Dieser Hinweis erscheint im PDF nicht.</div>"
 )
 
-CAPTION = r"<p><strong>(?:Abb|Tab)\.\s"
+CAPTION = r"<p><strong>(?:Abb|Fig|Tab)\.\s"
 
 
 def embed_images(html_doc: str, base: Path) -> str:
