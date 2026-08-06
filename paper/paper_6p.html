@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline</title>
+<style>
+/* Layout nach abstract/workshop_book_styleguide_2026/main.tex
+   A4, Rand 2,5 cm, Segoe UI, Fliesstext 9 pt / 14,4 pt, Ueberschriften
+   zentriert in GFaI-Blau #23355D, keine Seitenzahlen. */
+
+@page { size: A4; margin: 25mm; }
+
+:root { --ink:#000000; --blue:#23355D; --rule:#000000; }
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", "Segoe UI Web", Frutiger, "Helvetica Neue", Arial, sans-serif;
+  font-size: 9pt; line-height: 14.4pt; color: var(--ink);
+  margin: 0 auto; padding: 25mm 0 40mm; max-width: 160mm; background: #fff;
+  text-align: justify; hyphens: auto;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+
+/* ---------- Titelkopf -------------------------------------------------- */
+h1 {
+  font-size: 12pt; line-height: 14pt; font-weight: 700; color: #000;
+  text-align: center; margin: 0 0 9.5pt; hyphens: none;
+}
+p.authors {
+  font-size: 10pt; line-height: 14.4pt; text-align: center; margin: 0 0 2pt;
+}
+p.affiliation {
+  font-size: 10pt; line-height: 14.4pt; text-align: center; margin: 0 0 9pt;
+}
+p.abstract { margin: 9pt 0 0; }
+p.abstract > strong:first-child,
+p.keywords > strong:first-child {
+  font-size: 10pt; font-weight: 700; color: var(--blue);
+}
+p.keywords { text-align: center; margin: 15pt 0 0; }
+
+/* ---------- Ueberschriften --------------------------------------------- */
+h2, h3 {
+  font-size: 10pt; line-height: 12pt; font-weight: 700; color: var(--blue);
+  text-align: center; hyphens: none;
+  break-after: avoid; page-break-after: avoid;
+}
+h2 { margin: 22pt 0 8pt; }
+h3 { margin: 14pt 0 6pt; }
+
+/* ---------- Fliesstext -------------------------------------------------- */
+p { margin: 0 0 7pt; }
+hr { border: 0; border-top: .5pt solid #999; margin: 12pt 0; }
+a { color: var(--blue); text-decoration: none; }
+strong { font-weight: 700; }
+
+code, kbd {
+  font-family: Consolas, "Courier New", monospace; font-size: 8.5pt;
+  background: #f2f3f5; padding: 0 2px; border-radius: 2px;
+}
+
+ul, ol { margin: 0 0 7pt; padding-left: 14pt; }
+li { margin-bottom: 2pt; }
+
+/* ---------- Abbildungen ------------------------------------------------- */
+figure {
+  margin: 12pt 0; text-align: center;
+  break-inside: avoid; page-break-inside: avoid;
+}
+figure img { max-width: 100%; max-height: 112mm; width: auto; height: auto; }
+figcaption {
+  font-size: 9pt; line-height: 12pt; text-align: justify;
+  margin-top: 3pt; color: var(--ink);
+}
+figcaption strong:first-child { color: var(--ink); }
+
+/* Bildraster (die vier Rekonstruktionsschritte) */
+figure.grid table { width: 100%; border-collapse: collapse; }
+figure.grid table td, figure.grid table th {
+  border: 0; padding: 2pt 4pt; vertical-align: middle;
+  text-align: center; font-size: 8.5pt;
+}
+figure.grid table tbody tr { background: transparent; }
+figure.grid table img { max-width: 100%; max-height: 76mm; }
+figure.tab { margin: 10pt 0; }
+
+/* ---------- Tabellen im booktabs-Stil ----------------------------------- */
+table {
+  width: 100%; border-collapse: collapse; font-size: 8.5pt; line-height: 11pt;
+  margin: 4pt 0 3pt; break-inside: avoid; page-break-inside: avoid;
+}
+th, td {
+  border: 0; border-bottom: .4pt solid #b9bec6;
+  padding: 3pt 5pt; text-align: left; vertical-align: top;
+}
+thead th {
+  border-top: 1pt solid var(--ink); border-bottom: .6pt solid var(--ink);
+  font-weight: 700; background: transparent;
+}
+tbody tr:last-child td { border-bottom: 1pt solid var(--ink); }
+figure.grid table thead th, figure.grid table tbody tr:last-child td { border: 0; }
+
+/* ---------- Bildschirm-Hinweis ------------------------------------------ */
+.hint {
+  font-size: 8.5pt; line-height: 12pt; text-align: left;
+  background: #fff8e6; border: 1px solid #f0d9a0; border-radius: 4px;
+  padding: 8px 12px; margin-bottom: 24px; color: #5c4a1a;
+}
+
+@media print {
+  body { padding: 0; max-width: none; }
+  .hint { display: none; }
+  a { color: inherit; }
+}
+</style>
+</head>
+<body>
+<div class="hint"><strong>PDF-Export:</strong> Im Browser <em>Drucken</em> (Strg&nbsp;+&nbsp;P) &rarr; Ziel <em>Als PDF speichern</em>, Papierformat A4, Option <em>Hintergrundgrafiken</em> aktivieren. Dieser Hinweis erscheint im PDF nicht.</div>
+<h1>Photogrammetrie auf dem Laptop: Möglichkeiten und Grenzen einer in Python implementierten 3D Rekonstruktions-Pipeline</h1>
+<p class="authors">Rudolf Hoffmann<sup>1</sup>, Frank Neumann<sup>1</sup></p>
+<p class="affiliation"><sup>1</sup>HTW Berlin, Fachbereich 2 Informatik in Ingenieurwissenschaften, Wilhelminenhofstr. 75a, 12459 Berlin, Rudolf.Hoffmann@Student.HTW-Berlin.de, www.htw-berlin.de</p>
+<p class="abstract"><strong>Abstract:</strong> Wie weit trägt eine selbst implementierte Photogrammetrie-Pipeline auf einem
+handelsüblichen Laptop, ohne GPU-Cluster und ohne kommerzielle Software? Der Beitrag
+beantwortet diese Frage anhand eines studentischen Implementierungsprojekts und grenzt
+dabei genau ab, was „selbst implementiert&rdquo; bedeutet: Etablierte Bausteine wie SIFT,
+FLANN-Matching, die robusten Schätzer für Fundamental-, Essential- und Homographiematrix
+sowie PnP stammen aus OpenCV, der nichtlineare Löser aus SciPy; eigener Code ist die
+gesamte Rekonstruktionslogik samt Problemformulierung des Bundle Adjustment. Auf einem
+Datensatz mit 67 Aufnahmen und mitgelieferten Ground-Truth-Posen registriert die Pipeline
+alle Kameras und liefert eine formtreue Punktwolke aus 39.721 Punkten bei 2,08 px
+Reprojektions-RMSE. Der Vergleich mit der Ground Truth zeigt jedoch Schwächen, die diese
+pipeline-eigene Kennzahl nicht anzeigt: Die geschätzte Brennweite liegt 47 % neben dem
+wahren Wert und die Kameraorientierungen weichen im Median um 6,29° ab. COLMAP erreicht auf
+denselben Bildern, derselben CPU und mit derselben Merkmalszahl 0,2 % Brennweiten- und
+0,11° Orientierungsfehler in einem Viertel der Laufzeit. Die Genauigkeit steckt also in den
+Daten, und die Lücke liegt in der Umsetzung.</p>
+<p class="keywords"><strong>Keywords:</strong> Structure-from-Motion; Photogrammetrie; Python; Punktwolke; Bundle Adjustment; Studierendenprojekt</p>
+<h2>1  Einleitung</h2>
+<p>Aus einer Handvoll gewöhnlicher Fotos ein dreidimensionales Modell zu berechnen, gehört
+heute zu den Standardwerkzeugen von Vermessung, Denkmalpflege, Robotik und AR/VR. Die
+zugrundeliegende Technik ist in allen Fällen <em>Structure-from-Motion</em> (SfM), also die
+gleichzeitige Schätzung von Szenengeometrie und Kamerapositionen aus reinen Bilddaten. In
+der Praxis greifen die meisten Anwender zu fertigen Werkzeugen wie COLMAP [2] oder
+Meshroom, die gute Ergebnisse liefern, die zugrundeliegenden Algorithmen aber als Blackbox
+verbergen.</p>
+<p>Das hier beschriebene Projekt geht den umgekehrten Weg und baut die Verarbeitungskette
+selbst (Fig. 1), mit frei verfügbaren Bibliotheken und ohne spezialisierte Hardware. Daraus ergeben
+sich zwei Ziele. Das erste ist didaktisch: Jede Verarbeitungsstufe soll durch
+Zwischenergebnisse sichtbar werden. Das zweite ist evaluativ: Die Ergebnisse werden gegen
+Ground-Truth-Kameraposen und gegen COLMAP vermessen, um Möglichkeiten und Grenzen einer
+reinen Python-Umsetzung belastbar einzuordnen. Der Beitrag berichtet beides, einschließlich
+der Fehler, die dabei sichtbar geworden sind.</p>
+<figure>
+<p><img alt="Pipeline-Übersicht" src="figures/pipeline_overview.svg" /></p>
+<figcaption><strong>Fig. 1:</strong> Verarbeitungskette von den Eingabebildern über Merkmale, Matching, geometrische
+Verifikation, inkrementelle Rekonstruktion und Bundle Adjustment bis zur Punktwolke und
+optional zum Mesh.</figcaption>
+</figure>
+<h2>2  Eigener Code und verwendete Bibliotheken</h2>
+<p>SfM geht auf die Mehrbildgeometrie der 1980er- und 1990er-Jahre zurück und wurde von
+Hartley und Zisserman [1] systematisiert. Drei geometrische Grundideen tragen jede
+Umsetzung. Die <strong>Epipolargeometrie</strong> verbindet zwei Bilder über die Fundamentalmatrix und
+schränkt den Partner eines Bildpunktes auf eine Gerade ein, was falsche Korrespondenzen
+geometrisch verwerfbar macht. Die <strong>Triangulation</strong> rekonstruiert einen 3D-Punkt als
+Schnitt zweier Sehstrahlen, umso stabiler, je größer der Winkel zwischen ihnen ist. Das
+<strong>Bundle Adjustment</strong> (BA) optimiert schließlich alle Kameraposen und 3D-Punkte gemeinsam
+auf minimalen Reprojektionsfehler.</p>
+<p>Die Formulierung „selbst implementiert&rdquo; verlangt eine genaue Abgrenzung, denn SIFT [4],
+FLANN und RANSAC sind etablierte Verfahren, deren Implementierungen niemand ohne Not neu
+schreibt. Aus den Bibliotheken stammen daher die numerischen Primitive, also einzelne, klar
+umrissene Rechenschritte. Selbst geschrieben ist alles, was diese Primitive zu einer
+Rekonstruktion verbindet, sowie das vollständige Fehlermodell des Bundle Adjustment.
+Tab. 1 trennt beides auf.</p>
+<figure class="tab">
+<table>
+<thead>
+<tr>
+<th>Stufe</th>
+<th>Aus Bibliotheken</th>
+<th>Eigener Python-Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Merkmale</td>
+<td><code>cv2.SIFT_create</code></td>
+<td>Bildladen mit EXIF-Rotation, Schätzung der Intrinsik, Zwischenspeicherung</td>
+</tr>
+<tr>
+<td>Matching</td>
+<td><code>cv2.FlannBasedMatcher</code>, <code>cv2.kmeans</code></td>
+<td>Ratio-Test, Cross-Check, Auswahl der Kandidatenpaare (erschöpfend, sequenziell, Vokabularbaum)</td>
+</tr>
+<tr>
+<td>Verifikation</td>
+<td><code>findFundamentalMat</code> (USAC_MAGSAC), <code>findEssentialMat</code>, <code>recoverPose</code>, <code>findHomography</code></td>
+<td>Hartley-Normierung, Planaritätsprüfung nach Torr, Inlier-Buchführung, Zusammenhangskomponenten per Union-Find</td>
+</tr>
+<tr>
+<td>Rekonstruktion</td>
+<td><code>triangulatePoints</code>, <code>solvePnPRansac</code>, <code>solvePnPRefineLM</code></td>
+<td>Wahl des Startpaars, Registrierungsreihenfolge, Verwaltung von Tracks und Beobachtungen, Akzeptanzkriterien, Ausreißerentfernung, Retriangulation</td>
+</tr>
+<tr>
+<td>Bundle Adjustment</td>
+<td><code>scipy.optimize.least_squares</code> (Trust-Region-Reflective)</td>
+<td>Parametrisierung, Residuen inklusive Brown-Conrady-Verzeichnung, dünnbesetzte Jacobi-Struktur, adaptive Huber-Skala, Divergenzschutz, lokales BA-Fenster</td>
+</tr>
+<tr>
+<td>Dichte Stufe und Mesh</td>
+<td><code>cv2.StereoSGBM</code>, Open3D (Poisson) [3]</td>
+<td>Auswahl der Stereopaare, Sichtbarkeitsfilter, Reinigung, Farbübertragung, PLY-Export</td>
+</tr>
+</tbody>
+</table>
+<figcaption><strong>Tab. 1:</strong> Aufteilung zwischen Bibliotheksaufrufen und eigenem Code.</figcaption>
+</figure>
+<p>Die Antwort auf die Frage, ob wirklich alles Python ist, lautet damit differenziert: Der
+gesamte Projektcode ist Python, rund 9.700 Zeilen, keine eigene Zeile C++ oder CUDA. Die
+aufgerufenen Bibliotheken sind ihrerseits in C++ geschrieben, so dass die rechenintensiven
+Primitive kompiliert ausgeführt werden und Python die Steuerungsschicht bildet. Für die
+Laufzeit ist das günstiger, als es klingt: Der in Abschnitt 5 genannte Engpass entsteht
+innerhalb der OpenCV-Aufrufe und nicht im Python-Code darum herum.</p>
+<h2>3  Die Pipeline</h2>
+<p>Für jedes Bild werden bis zu 8.000 SIFT-Merkmale detektiert. Sie konzentrieren sich auf
+texturierte Flächen, während strukturlose Regionen leer bleiben, was später die Grenze der
+Pipeline bestimmt. Korrespondenzen zwischen Bildpaaren findet eine FLANN-basierte Suche
+nach den beiden nächsten Nachbarn; der Ratio-Test nach Lowe behält nur Zuordnungen, deren
+bester Treffer deutlich eindeutiger ist als der zweitbeste. Verglichen werden standardmäßig
+alle Bildpaare.</p>
+<p>Jedes Paar durchläuft anschließend vier Filter. Eine Hartley-Normierung stabilisiert die
+Pixelkoordinaten, <code>USAC_MAGSAC</code> schätzt robust die Fundamentalmatrix, ein Vergleich mit
+einer konkurrierenden Homographie verwirft nach dem Kriterium von Torr planare und damit
+degenerierte Paare, und aus der Essential-Matrix folgt über die Cheiralitätsbedingung die
+relative Kamerapose. Ein Union-Find-Verfahren behält von den Zusammenhangskomponenten des
+Szenengraphen nur die größte.</p>
+<p>Die Rekonstruktion wächst danach kameraweise. Als Startpaar dient das Paar mit dem größten
+Produkt aus Basislinie und Inlier-Zahl bei einem Triangulationswinkel von mindestens 5°.
+Iterativ wird jeweils das Bild mit den meisten 2D-3D-Korrespondenzen per PnP mit RANSAC und
+anschließender Levenberg-Marquardt-Verfeinerung registriert; neue Punkte werden mit allen
+sichtbaren Kameras trianguliert und nur bei positiver Tiefe, hinreichendem Winkel und
+kleinem Reprojektionsfehler übernommen. Nach jeweils fünf Kameras und am Ende läuft ein
+Bundle Adjustment über <code>scipy.optimize.least_squares</code> mit selbst aufgebauter dünnbesetzter
+Jacobi-Struktur, einem Projektionsmodell mit radialer Verzeichnung und einem Huber-Loss,
+dessen Skala aus der Streuung der Startresiduen abgeleitet wird.</p>
+<p>Optional erzeugt die Pipeline über StereoSGBM eine dichte Wolke und über Screened Poisson
+in Open3D [3] ein Mesh. Als Referenzsystem dient COLMAP [2], aufgerufen über denselben
+Einstiegspunkt auf identischen Eingabedaten. Verwendet wurde COLMAP 4.1.1 ohne CUDA, so
+dass beide Systeme ausschließlich auf der CPU desselben Rechners arbeiten.</p>
+<h2>4  Ergebnisse</h2>
+<p>Ausgewertet wird der Datensatz „Buddha&rdquo; aus dem AliceVision-Projekt: 67 Aufnahmen einer
+genoppten Statue auf einem Drehteller, 2736 × 1540 Pixel, mit einer
+Ground-Truth-Projektionsmatrix je Bild. Beide Systeme erhalten dieselben Bilder, dieselbe
+Merkmalszahl und erschöpfendes Matching. Vor jedem Fehlermaß richtet eine
+Sim(3)-Anpassung nach Umeyama die geschätzten Kamerazentren auf die Ground Truth aus, da
+monokulares SfM skalenfrei ist; Positionsfehler sind auf die Ausdehnung der
+Ground-Truth-Trajektorie normiert. Tab. 2 stellt beide Systeme gegenüber.</p>
+<figure class="tab">
+<table>
+<thead>
+<tr>
+<th>Kennzahl</th>
+<th style="text-align: right;">Eigene Pipeline</th>
+<th style="text-align: right;">COLMAP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Registrierte Kameras</td>
+<td style="text-align: right;">67 von 67</td>
+<td style="text-align: right;">67 von 67</td>
+</tr>
+<tr>
+<td>3D-Punkte</td>
+<td style="text-align: right;">39.721</td>
+<td style="text-align: right;">35.538</td>
+</tr>
+<tr>
+<td>Mittlere Tracklänge</td>
+<td style="text-align: right;">2,70</td>
+<td style="text-align: right;">4,69</td>
+</tr>
+<tr>
+<td>Reprojektions-RMSE</td>
+<td style="text-align: right;">2,08 px</td>
+<td style="text-align: right;">nicht exportiert</td>
+</tr>
+<tr>
+<td>Geschätzte Brennweite</td>
+<td style="text-align: right;">2.736,0 px</td>
+<td style="text-align: right;">1.857,5 px</td>
+</tr>
+<tr>
+<td>Brennweitenfehler</td>
+<td style="text-align: right;">+47,0 %</td>
+<td style="text-align: right;">-0,2 %</td>
+</tr>
+<tr>
+<td>Rotationsfehler, Median und Maximum</td>
+<td style="text-align: right;">6,29° / 20,28°</td>
+<td style="text-align: right;">0,11° / 0,20°</td>
+</tr>
+<tr>
+<td>Positionsfehler, Median und Maximum</td>
+<td style="text-align: right;">2,06 % / 11,60 %</td>
+<td style="text-align: right;">0,02 % / 0,05 %</td>
+</tr>
+<tr>
+<td>Laufzeit</td>
+<td style="text-align: right;">1.135,5 s</td>
+<td style="text-align: right;">293 s</td>
+</tr>
+</tbody>
+</table>
+<figcaption><strong>Tab. 2:</strong> Gemessene Kennzahlen gegen Ground Truth, beide Systeme mit 8.000 Merkmalen je
+Bild auf demselben Rechner. Die Ground-Truth-Brennweite beträgt 1.860,9 px.</figcaption>
+</figure>
+<p>Qualitativ liefert die eigene Pipeline auf diesem dicht abgetasteten, gut texturierten
+Datensatz eine vollständige und formtreue Rekonstruktion: alle 67 Kameras registriert,
+39.721 Punkte, Objektform und Farbgebung eindeutig erkennbar, weniger als 1 % Ausreißer.
+Der Reprojektionsfehler von 2,08 px im RMSE und 0,84 px im Median bestätigt das scheinbar.</p>
+<p>Das zentrale Ergebnis steht jedoch in der Zeile zur Brennweite. Die Bilder tragen kein
+EXIF, weshalb die Intrinsik-Schätzung auf die Heuristik <code>focal = max(W, H)</code> zurückfällt und
+2.736 px ansetzt, also die Bildbreite statt der wahren 1.860,9 px. Das Bundle Adjustment
+korrigiert diesen Fehler nie: Über alle 67 Kameras protokolliert jede Runde eine Änderung
+von exakt null. Zwei Erklärungen wurden experimentell ausgeschlossen. Die Schranken des
+Optimierers liegen bei 1.368 px und 5.472 px und enthalten den wahren Wert; eine
+Parameterskalierung als Ursache widerlegt ein Kontrolllauf mit aktivierter
+Jacobi-Skalierung, bei dem sich die Brennweite ebenfalls nicht bewegt. Es bleibt die
+Erklärung, dass die Rekonstruktion bei der falschen Brennweite bereits in sich konsistent
+ist: Startpose, Triangulation und PnP wurden alle mit 2.736 px gerechnet, die Struktur ist
+entsprechend projektiv verformt, und das BA hat nichts mehr zu gewinnen. Dazu passt der
+Verlauf der Optimierung. Im visualisierten Referenzlauf steigt der Reprojektions-RMSE über
+vierzehn BA-Runden von 7,55 px bei sieben Kameras auf 10,88 px bei 67, statt zu fallen;
+die Kurven vor und nach jeder Runde liegen dabei praktisch übereinander.</p>
+<p>COLMAP entkräftet auf denselben Bildern jede Ausrede, die man dafür anführen könnte. Es
+startet ebenfalls ohne Kalibrierung, verfeinert die Brennweite aber bis auf 1.857,5 px und
+liegt damit 0,2 % neben der Ground Truth. Der Datensatz enthält also genügend Information,
+um die Brennweite zu bestimmen; die eigene Umsetzung holt sie nur nicht heraus.
+Entsprechend fallen die Posenfehler aus: 0,11° gegenüber 6,29° im Median. Ein zweiter
+Unterschied erklärt einen Teil davon. COLMAP verknüpft im Mittel 4,69 Beobachtungen zu
+einem 3D-Punkt, die eigene Pipeline nur 2,70; längere Tracks binden jede Kamera an mehr
+gemeinsame Struktur und machen die Lösung steifer. Fig. 2 zeigt beide Wolken nebeneinander.</p>
+<figure>
+<p><img alt="Vergleich mit COLMAP" src="figures/fig2_vergleich_colmap_ausgerichtet.png" /></p>
+<figcaption><strong>Fig. 2:</strong> Dieselben 67 Bilder, links die eigene Pipeline, rechts COLMAP. Beide Wolken
+sind über eine Sim(3)-Anpassung der Kamerazentren in dasselbe Koordinatensystem gelegt und
+aus derselben Richtung mit identischem Maßstab gerendert. Die eigene Wolke enthält mehr
+Punkte, zeichnet die genoppte Oberfläche aber diffuser. Vor allem fällt sie kleiner aus:
+Bezogen auf die ausgerichteten Kamerazentren beträgt ihr mittlerer Objektradius das
+0,69-fache, während der Brennweitenfehler von +47 % genau den Faktor 0,68 vorhersagt. Die
+projektive Verformung ist damit direkt sichtbar und quantitativ bestätigt.</figcaption>
+</figure>
+<p>Ein letzter Befund betrifft die Wiederholbarkeit. Vier byte-identische Aufrufe auf
+denselben 20 Bildern registrierten 13, 13, 14 und 6 Kameras, eine Streuung von 57 %.</p>
+<h2>5  Diskussion</h2>
+<p>Auf dicht abgetasteten, gut texturierten Szenen arbeitet die Pipeline zuverlässig und
+bleibt mit 1,5 GB Spitzenspeicher im Rahmen eines gewöhnlichen Laptops. Ebenso deutlich
+sind die Grenzen, und für jede lässt sich die Ursache im Code benennen.</p>
+<p><strong>Die Intrinsik ist die gravierendste Schwäche.</strong> Ohne EXIF rät die Pipeline
+<code>focal = max(W, H)</code>, das Bundle Adjustment korrigiert den Wert nicht, weil die
+Rekonstruktion bei dieser Brennweite bereits in sich konsistent ist, und eine Option zur
+Vorgabe einer bekannten Kalibrierung existiert nicht. Dass es sich um ein
+Implementierungsproblem und nicht um eine Grenze der Daten handelt, zeigt COLMAP auf
+denselben Bildern.</p>
+<p><strong>Die Ergebnisse sind nicht reproduzierbar.</strong> <code>cv2.setRNGSeed</code> wird nirgends aufgerufen, so
+dass <code>USAC_MAGSAC</code> und <code>solvePnPRansac</code> aus dem prozessglobalen Zufallszahlengenerator von
+OpenCV ziehen. Solange das offen ist, lässt sich der Nutzen jeder weiteren Verbesserung
+nicht sauber messen.</p>
+<p><strong>Die Skalierungsgrenze liegt beim Matching, nicht beim Bundle Adjustment.</strong> Erschöpfendes
+Matching stellt bei 67 Bildern 91 % der Laufzeit, bei praktisch konstanten Kosten je
+Bildpaar von rund 0,5 s, während das BA mit 38,2 s nicht ins Gewicht fällt. Das
+widerspricht der Erwartung, der voreingestellte SciPy-Löser werde als Erstes zum Engpass,
+weil er kein Schur-Komplement nutzt. Der Code-Befund stimmt, die Laufzeitfolge nicht:
+Das BA wächst zwar schneller als linear, startet aber von einem so kleinen Betrag, dass
+beide Kurven sich erst weit außerhalb des vermessenen Bereichs schneiden würden.</p>
+<p><strong>Die Tracks sind zu kurz und ohne Schleifenschluss driftet die Lösung.</strong> Bei einer
+mittleren Tracklänge von 2,70 stammt die Mehrzahl der Punkte aus nur zwei Bildern, und rund
+8 % sind exakte Duplikate nicht verschmolzener Tracks. Zugleich hängt die Registrierung
+jede neue Kamera an den bestehenden Verbund an, so dass sich Posenfehler über den Rundgang
+aufsummieren, was der steigende BA-Fehler direkt zeigt.</p>
+<p><strong>Texturarme und planare Szenen</strong> bleiben die theoretisch erwartete Grenze. SIFT findet
+dort zu wenige Merkmale, und bei dominanter Ebene erklärt eine Homographie die
+Korrespondenzen ebenso gut, weshalb die Verifikation solche Paare verwirft. Ein falsches
+Ergebnis wird so vermieden, der Bildgraph verliert aber Kanten.</p>
+<p>Der Vergleich mit COLMAP fällt damit weniger algorithmisch als praktisch aus. Die
+Grundstruktur ist in beiden Systemen ähnlich, und beide liefen hier auf derselben CPU mit
+denselben Bildern. Der Unterschied liegt in der Ausführung, also in belastbaren
+Startwerten, konsequenter Track-Verwaltung, ausgereifter Ausreißerbehandlung und einem für
+dieses Problem gebauten Solver.</p>
+<h2>6  Fazit</h2>
+<p>Eine vollständig in Python geschriebene SfM-Pipeline rekonstruiert einen gut abgetasteten,
+texturreichen Datensatz aus 67 Bildern vollständig und formtreu, auf einem handelsüblichen
+Laptop und mit transparenten Zwischenergebnissen. Das wichtigste Ergebnis des Projekts ist
+jedoch methodisch: Die Selbstauskunft der Pipeline über ihre eigene Qualität ist
+unzuverlässig. Ein Reprojektionsfehler von 2,08 px signalisiert eine saubere
+Rekonstruktion, während die Brennweite 47 % danebenliegt und die Kameraorientierungen im
+Median um mehr als 6° verdreht sind. COLMAP liefert auf denselben Bildern die Gegenprobe
+und zeigt mit 0,11° Orientierungsfehler in einem Viertel der Laufzeit, dass die Daten die
+Genauigkeit hergeben und die Lücke ausschließlich in der eigenen Umsetzung liegt. Für ein
+Lernprojekt ist das die nützlichste Form eines Ergebnisses, denn sie benennt nicht nur eine
+Grenze, sondern belegt, dass sie überwindbar ist. Die Reihenfolge der Weiterarbeit folgt
+daraus unmittelbar: erst den Zufallszahlengenerator setzen, dann eine Kalibrierungsvorgabe
+und eine Brennweitensuche beim Startpaar, danach die Skalierung des Matchings.</p>
+<h2>Literatur</h2>
+<p>[1] R. Hartley and A. Zisserman, <em>Multiple View Geometry in Computer Vision</em>, 2nd ed.
+Cambridge, U.K.: Cambridge University Press, 2003.</p>
+<p>[2] J. L. Schönberger and J.-M. Frahm, &ldquo;Structure-from-motion revisited,&rdquo; in <em>Proc. IEEE
+Conf. Computer Vision and Pattern Recognition (CVPR)</em>, 2016, pp. 4104-4113.</p>
+<p>[3] Q.-Y. Zhou, J. Park, and V. Koltun, &ldquo;Open3D: A modern library for 3D data processing,&rdquo;
+arXiv:1801.09847, 2018.</p>
+<p>[4] D. G. Lowe, &ldquo;Distinctive image features from scale-invariant keypoints,&rdquo; <em>International
+Journal of Computer Vision</em>, vol. 60, no. 2, pp. 91-110, 2004.</p>
+</body>
+</html>

@@ -82,7 +82,8 @@ def _center_and_scale(pts: np.ndarray) -> tuple[np.ndarray, float]:
     return p, half
 
 
-def render(paths, labels, out, elev, azim, dpi, max_points, point_size):
+def render(paths, labels, out, elev, azim, dpi, max_points, point_size,
+           normalize=False):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -97,9 +98,15 @@ def render(paths, labels, out, elev, azim, dpi, max_points, point_size):
             idx = rng.choice(len(pts), max_points, replace=False)
             pts, colors = pts[idx], (colors[idx] if colors is not None else None)
         p, half = _center_and_scale(pts)
+        if normalize:
+            # Monocular SfM is scale-free, so two reconstructions of the same
+            # scene differ by an arbitrary factor. Normalising each cloud to its
+            # own robust extent compares shape and completeness instead of that
+            # meaningless factor.
+            p, half = p / half, 1.0
         clouds.append((p, colors))
         halves.append(half)
-    shared = max(halves)  # identical scale for a fair comparison
+    shared = max(halves)  # identical axis range for both panels
 
     for i, ((p, colors), label, path) in enumerate(zip(clouds, labels, paths)):
         ax = fig.add_subplot(1, 2, i + 1, projection="3d")
@@ -131,10 +138,13 @@ def main(argv=None) -> int:
     ap.add_argument("--dpi", type=int, default=300)
     ap.add_argument("--max-points", type=int, default=60000)
     ap.add_argument("--point-size", type=float, default=1.5)
+    ap.add_argument("--normalize", action="store_true",
+                    help="jede Wolke auf ihre eigene Ausdehnung normieren "
+                         "(SfM ist skalenfrei; vergleicht Form statt Skala)")
     a = ap.parse_args(argv)
     try:
         render(a.ply, a.labels, a.output, a.elev, a.azim, a.dpi,
-               a.max_points, a.point_size)
+               a.max_points, a.point_size, a.normalize)
     except (FileNotFoundError, ValueError) as e:
         print(f"[compare_ply] error: {e}", file=sys.stderr)
         return 1

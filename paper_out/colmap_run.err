@@ -1,0 +1,637 @@
+17:40:43 [INFO] __main__: ==============================================================
+17:40:43 [INFO] __main__:   Structure from Motion Pipeline  [backend: colmap]
+17:40:43 [INFO] __main__: ==============================================================
+17:40:43 [INFO] sfm.colmap_backend: [COLMAP] COLMAP 4.1.1 (Commit a0d785f on 2026-07-17 without CUDA)
+17:40:43 [INFO] sfm.colmap_backend: [COLMAP] Workspace : paper_out\colmap_workspace
+17:40:43 [INFO] sfm.colmap_backend: [COLMAP] Image dir : C:\sfm_daten\buddha67
+17:40:43 [INFO] sfm.colmap_backend: [COLMAP] [1/3] Feature extraction…
+17:40:43 [DEBUG] sfm.colmap_backend: [COLMAP] C:\tools\colmap\bin\colmap.exe feature_extractor --database_path paper_out\colmap_workspace\database.db --image_path C:\sfm_daten\buddha67 --ImageReader.single_camera 1 --SiftExtraction.max_num_features 8000 --FeatureExtraction.use_gpu 0
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] W20260806 17:40:44.370569 19956 feature_extraction.cc:445] Your current options use the maximum number of threads on the machine to extract features. Extracting SIFT features on the CPU can consume a lot of RAM per thread for large images. Consider reducing the maximum image size and/or the first octave or manually limit the number of extraction threads. Ignore this warning, if your machine has sufficient memory for the current settings.
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.373768 18920 feature_extraction.cc:494] === Feature extraction ===
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.374611 21872 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.374722 10436 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375347  4744 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375464 30260 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375539  7408 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375697 35108 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375759 38484 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375819 38476 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375882 35072 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.375936 24476 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.376014 21520 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:44 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:44.376100  7908 sift.cc:763] Creating SIFT CPU feature extractor
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.311169 14404 feature_extraction.cc:270] Processed file [1/67]
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.311386 14404 feature_extraction.cc:273]   Name:            00002._c.png
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.311403 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.311417 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.311435 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.311498 14404 feature_extraction.cc:294]   Features:        4563 (SIFT)
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.427938 14404 feature_extraction.cc:270] Processed file [2/67]
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.428092 14404 feature_extraction.cc:273]   Name:            00001._c.png
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.428115 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.428386 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.428403 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.428424 14404 feature_extraction.cc:294]   Features:        10844 (SIFT)
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.838345 14404 feature_extraction.cc:270] Processed file [3/67]
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.838462 14404 feature_extraction.cc:273]   Name:            00005._c.png
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.838482 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.838495 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.838510 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:50 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:50.838531 14404 feature_extraction.cc:294]   Features:        7064 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.159923 14404 feature_extraction.cc:270] Processed file [4/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.160060 14404 feature_extraction.cc:273]   Name:            00009._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.160077 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.160091 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.160106 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.160129 14404 feature_extraction.cc:294]   Features:        7255 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.274310 14404 feature_extraction.cc:270] Processed file [5/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.274409 14404 feature_extraction.cc:273]   Name:            00008._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.274430 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.274443 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.274458 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.274480 14404 feature_extraction.cc:294]   Features:        8550 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.373481 14404 feature_extraction.cc:270] Processed file [6/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.373584 14404 feature_extraction.cc:273]   Name:            00004._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.373604 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.373620 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.373801 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.373829 14404 feature_extraction.cc:294]   Features:        7997 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.469267 14404 feature_extraction.cc:270] Processed file [7/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.469381 14404 feature_extraction.cc:273]   Name:            00003._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.469404 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.469419 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.469437 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.469462 14404 feature_extraction.cc:294]   Features:        8253 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.568734 14404 feature_extraction.cc:270] Processed file [8/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.568844 14404 feature_extraction.cc:273]   Name:            00006._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.568863 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.568876 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.568893 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.569115 14404 feature_extraction.cc:294]   Features:        7443 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.752855 14404 feature_extraction.cc:270] Processed file [9/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.752997 14404 feature_extraction.cc:273]   Name:            00010._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.753020 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.753034 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.753049 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.753074 14404 feature_extraction.cc:294]   Features:        7426 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.847802 14404 feature_extraction.cc:270] Processed file [10/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.847899 14404 feature_extraction.cc:273]   Name:            00011._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.847921 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.847935 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.847949 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.847968 14404 feature_extraction.cc:294]   Features:        7962 (SIFT)
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.941300 14404 feature_extraction.cc:270] Processed file [11/67]
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.941397 14404 feature_extraction.cc:273]   Name:            00007._c.png
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.941412 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.941424 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.941437 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:51 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:51.941456 14404 feature_extraction.cc:294]   Features:        7642 (SIFT)
+17:40:52 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:52.921712 14404 feature_extraction.cc:270] Processed file [12/67]
+17:40:52 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:52.921809 14404 feature_extraction.cc:273]   Name:            00012._c.png
+17:40:52 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:52.921825 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:52 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:52.921836 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:52 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:52.921850 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:52 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:52.921866 14404 feature_extraction.cc:294]   Features:        12741 (SIFT)
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.637164 14404 feature_extraction.cc:270] Processed file [13/67]
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.637297 14404 feature_extraction.cc:273]   Name:            00014._c.png
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.637316 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.637329 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.637344 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.637364 14404 feature_extraction.cc:294]   Features:        9500 (SIFT)
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.908660 14404 feature_extraction.cc:270] Processed file [14/67]
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.908796 14404 feature_extraction.cc:273]   Name:            00020._c.png
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.908906 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.908923 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.908938 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:56 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:56.908960 14404 feature_extraction.cc:294]   Features:        3279 (SIFT)
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.012102 14404 feature_extraction.cc:270] Processed file [15/67]
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.012209 14404 feature_extraction.cc:273]   Name:            00013._c.png
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.012227 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.012239 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.012253 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.012271 14404 feature_extraction.cc:294]   Features:        10046 (SIFT)
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.119787 14404 feature_extraction.cc:270] Processed file [16/67]
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.119926 14404 feature_extraction.cc:273]   Name:            00015._c.png
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.119943 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.119957 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.119972 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.119992 14404 feature_extraction.cc:294]   Features:        12273 (SIFT)
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.372955 14404 feature_extraction.cc:270] Processed file [17/67]
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.373075 14404 feature_extraction.cc:273]   Name:            00018._c.png
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.373094 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.373107 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.373135 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.373155 14404 feature_extraction.cc:294]   Features:        6237 (SIFT)
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.468356 14404 feature_extraction.cc:270] Processed file [18/67]
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.468484 14404 feature_extraction.cc:273]   Name:            00021._c.png
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.468504 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.468518 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.468536 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.468555 14404 feature_extraction.cc:294]   Features:        7075 (SIFT)
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.564687 14404 feature_extraction.cc:270] Processed file [19/67]
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.564804 14404 feature_extraction.cc:273]   Name:            00019._c.png
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.564827 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.564841 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.564857 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.564879 14404 feature_extraction.cc:294]   Features:        8597 (SIFT)
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.675245 14404 feature_extraction.cc:270] Processed file [20/67]
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.675384 14404 feature_extraction.cc:273]   Name:            00017._c.png
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.675404 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.675416 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.675432 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:57 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:57.675453 14404 feature_extraction.cc:294]   Features:        8378 (SIFT)
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.085515 14404 feature_extraction.cc:270] Processed file [21/67]
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.085643 14404 feature_extraction.cc:273]   Name:            00016._c.png
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.085659 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.085672 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.085687 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.085706 14404 feature_extraction.cc:294]   Features:        11716 (SIFT)
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.472496 14404 feature_extraction.cc:270] Processed file [22/67]
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.472629 14404 feature_extraction.cc:273]   Name:            00022._c.png
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.472649 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.472664 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.472679 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.472699 14404 feature_extraction.cc:294]   Features:        9969 (SIFT)
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.656037 14404 feature_extraction.cc:270] Processed file [23/67]
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.656177 14404 feature_extraction.cc:273]   Name:            00023._c.png
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.656197 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.656211 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.656226 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:58 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:58.656248 14404 feature_extraction.cc:294]   Features:        12392 (SIFT)
+17:40:59 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:59.742764 14404 feature_extraction.cc:270] Processed file [24/67]
+17:40:59 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:59.742858 14404 feature_extraction.cc:273]   Name:            00024._c.png
+17:40:59 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:59.742878 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:40:59 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:59.742891 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:40:59 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:59.742906 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:40:59 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:40:59.742925 14404 feature_extraction.cc:294]   Features:        12258 (SIFT)
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.663778 14404 feature_extraction.cc:270] Processed file [25/67]
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.663905 14404 feature_extraction.cc:273]   Name:            00026._c.png
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.663923 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.663947 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.663961 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.663980 14404 feature_extraction.cc:294]   Features:        6540 (SIFT)
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.816136 14404 feature_extraction.cc:270] Processed file [26/67]
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.816312 14404 feature_extraction.cc:273]   Name:            00025._c.png
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.816331 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.816345 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.816361 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.816387 14404 feature_extraction.cc:294]   Features:        8351 (SIFT)
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.929135 14404 feature_extraction.cc:270] Processed file [27/67]
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.929221 14404 feature_extraction.cc:273]   Name:            00028._c.png
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.929241 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.929256 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.929272 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:02 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:02.929291 14404 feature_extraction.cc:294]   Features:        6226 (SIFT)
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.098122 14404 feature_extraction.cc:270] Processed file [28/67]
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.098253 14404 feature_extraction.cc:273]   Name:            00027._c.png
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.098274 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.098288 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.098302 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.098323 14404 feature_extraction.cc:294]   Features:        9628 (SIFT)
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.360100 14404 feature_extraction.cc:270] Processed file [29/67]
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.360214 14404 feature_extraction.cc:273]   Name:            00029._c.png
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.360234 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.360247 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.360461 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.360493 14404 feature_extraction.cc:294]   Features:        5548 (SIFT)
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.587016 14404 feature_extraction.cc:270] Processed file [30/67]
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.587139 14404 feature_extraction.cc:273]   Name:            00030._c.png
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.587158 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.587171 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.587186 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:03 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:03.587208 14404 feature_extraction.cc:294]   Features:        7765 (SIFT)
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.036525 14404 feature_extraction.cc:270] Processed file [31/67]
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.036635 14404 feature_extraction.cc:273]   Name:            00032._c.png
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.036653 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.036666 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.036680 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.036697 14404 feature_extraction.cc:294]   Features:        11118 (SIFT)
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.203725 14404 feature_extraction.cc:270] Processed file [32/67]
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.203854 14404 feature_extraction.cc:273]   Name:            00031._c.png
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.203873 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.203886 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.203926 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.203961 14404 feature_extraction.cc:294]   Features:        12064 (SIFT)
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.334485 14404 feature_extraction.cc:270] Processed file [33/67]
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.334596 14404 feature_extraction.cc:273]   Name:            00033._c.png
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.334610 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.334621 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.334634 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:04 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:04.334653 14404 feature_extraction.cc:294]   Features:        10588 (SIFT)
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.313489 14404 feature_extraction.cc:270] Processed file [34/67]
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.313603 14404 feature_extraction.cc:273]   Name:            00035._c.png
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.313623 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.313635 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.313651 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.313673 14404 feature_extraction.cc:294]   Features:        11125 (SIFT)
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.411807 14404 feature_extraction.cc:270] Processed file [35/67]
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.411915 14404 feature_extraction.cc:273]   Name:            00034._c.png
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.411932 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.411945 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.411960 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.411978 14404 feature_extraction.cc:294]   Features:        10673 (SIFT)
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.784066 14404 feature_extraction.cc:270] Processed file [36/67]
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.784311 14404 feature_extraction.cc:273]   Name:            00036._c.png
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.784355 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.784369 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.784386 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:05 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:05.784415 14404 feature_extraction.cc:294]   Features:        8032 (SIFT)
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.250391 14404 feature_extraction.cc:270] Processed file [37/67]
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.250555 14404 feature_extraction.cc:273]   Name:            00037._c.png
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.250572 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.250584 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.250596 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.250614 14404 feature_extraction.cc:294]   Features:        6654 (SIFT)
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.492457 14404 feature_extraction.cc:270] Processed file [38/67]
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.492563 14404 feature_extraction.cc:273]   Name:            00038._c.png
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.492580 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.492592 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.492608 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.492630 14404 feature_extraction.cc:294]   Features:        5867 (SIFT)
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.862300 14404 feature_extraction.cc:270] Processed file [39/67]
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.862424 14404 feature_extraction.cc:273]   Name:            00039._c.png
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.862445 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.862460 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.862474 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:08 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:08.862495 14404 feature_extraction.cc:294]   Features:        9297 (SIFT)
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.140801 14404 feature_extraction.cc:270] Processed file [40/67]
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.140923 14404 feature_extraction.cc:273]   Name:            00040._c.png
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.140942 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.140956 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.140970 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.140991 14404 feature_extraction.cc:294]   Features:        10596 (SIFT)
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.426969 14404 feature_extraction.cc:270] Processed file [41/67]
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.427118 14404 feature_extraction.cc:273]   Name:            00042._c.png
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.427136 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.427148 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.427162 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:09 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:09.427181 14404 feature_extraction.cc:294]   Features:        7467 (SIFT)
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.285828 14404 feature_extraction.cc:270] Processed file [42/67]
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.285945 14404 feature_extraction.cc:273]   Name:            00043._c.png
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.285963 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.285975 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.285988 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.286005 14404 feature_extraction.cc:294]   Features:        10936 (SIFT)
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.441041 14404 feature_extraction.cc:270] Processed file [43/67]
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.441177 14404 feature_extraction.cc:273]   Name:            00041._c.png
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.441199 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.441213 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.441228 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.441247 14404 feature_extraction.cc:294]   Features:        11851 (SIFT)
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.726949 14404 feature_extraction.cc:270] Processed file [44/67]
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.727071 14404 feature_extraction.cc:273]   Name:            00045._c.png
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.727089 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.727100 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.727113 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.727224 14404 feature_extraction.cc:294]   Features:        12460 (SIFT)
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.739490 14404 feature_extraction.cc:270] Processed file [45/67]
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.739622 14404 feature_extraction.cc:273]   Name:            00044._c.png
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.739640 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.739651 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.739666 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:10 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:10.739684 14404 feature_extraction.cc:294]   Features:        9598 (SIFT)
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.244410 14404 feature_extraction.cc:270] Processed file [46/67]
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.244634 14404 feature_extraction.cc:273]   Name:            00047._c.png
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.244664 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.244686 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.244710 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.244737 14404 feature_extraction.cc:294]   Features:        5724 (SIFT)
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.343666 14404 feature_extraction.cc:270] Processed file [47/67]
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.343796 14404 feature_extraction.cc:273]   Name:            00046._c.png
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.343813 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.343826 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.343840 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:11 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:11.343860 14404 feature_extraction.cc:294]   Features:        5562 (SIFT)
+17:41:12 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:12.016929 14404 feature_extraction.cc:270] Processed file [48/67]
+17:41:12 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:12.017059 14404 feature_extraction.cc:273]   Name:            00048._c.png
+17:41:12 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:12.017077 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:12 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:12.017089 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:12 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:12.017106 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:12 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:12.017127 14404 feature_extraction.cc:294]   Features:        10257 (SIFT)
+17:41:13 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:13.866811 14404 feature_extraction.cc:270] Processed file [49/67]
+17:41:13 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:13.867011 14404 feature_extraction.cc:273]   Name:            00049._c.png
+17:41:13 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:13.867028 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:13 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:13.867040 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:13 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:13.867058 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:13 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:13.867083 14404 feature_extraction.cc:294]   Features:        5013 (SIFT)
+17:41:14 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:14.282228 14404 feature_extraction.cc:270] Processed file [50/67]
+17:41:14 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:14.282429 14404 feature_extraction.cc:273]   Name:            00052._c.png
+17:41:14 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:14.282448 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:14 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:14.282462 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:14 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:14.282478 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:14 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:14.282501 14404 feature_extraction.cc:294]   Features:        1925 (SIFT)
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.230535 14404 feature_extraction.cc:270] Processed file [51/67]
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.230781 14404 feature_extraction.cc:273]   Name:            00051._c.png
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.230803 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.230817 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.230833 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.230857 14404 feature_extraction.cc:294]   Features:        12193 (SIFT)
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.683154 14404 feature_extraction.cc:270] Processed file [52/67]
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.683292 14404 feature_extraction.cc:273]   Name:            00050._c.png
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.683313 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.683329 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.683345 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:15 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:15.683373 14404 feature_extraction.cc:294]   Features:        10031 (SIFT)
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.161696 14404 feature_extraction.cc:270] Processed file [53/67]
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.161843 14404 feature_extraction.cc:273]   Name:            00053._c.png
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.161860 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.161873 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.161888 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.161908 14404 feature_extraction.cc:294]   Features:        10642 (SIFT)
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.669257 14404 feature_extraction.cc:270] Processed file [54/67]
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.669361 14404 feature_extraction.cc:273]   Name:            00054._c.png
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.669376 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.669388 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.669402 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.669419 14404 feature_extraction.cc:294]   Features:        11595 (SIFT)
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.800078 14404 feature_extraction.cc:270] Processed file [55/67]
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.800190 14404 feature_extraction.cc:273]   Name:            00055._c.png
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.800208 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.800221 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.800234 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.800253 14404 feature_extraction.cc:294]   Features:        6048 (SIFT)
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.920579 14404 feature_extraction.cc:270] Processed file [56/67]
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.920688 14404 feature_extraction.cc:273]   Name:            00056._c.png
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.920706 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.920718 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.920733 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:16 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:16.920751 14404 feature_extraction.cc:294]   Features:        6539 (SIFT)
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.005424 14404 feature_extraction.cc:270] Processed file [57/67]
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.005523 14404 feature_extraction.cc:273]   Name:            00057._c.png
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.005543 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.005557 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.005575 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.005595 14404 feature_extraction.cc:294]   Features:        9937 (SIFT)
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.335861 14404 feature_extraction.cc:270] Processed file [58/67]
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.335985 14404 feature_extraction.cc:273]   Name:            00058._c.png
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.336006 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.336020 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.336035 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.336261 14404 feature_extraction.cc:294]   Features:        6260 (SIFT)
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.531771 14404 feature_extraction.cc:270] Processed file [59/67]
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.531933 14404 feature_extraction.cc:273]   Name:            00060._c.png
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.531963 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.531982 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.532007 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.532036 14404 feature_extraction.cc:294]   Features:        5305 (SIFT)
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.963046 14404 feature_extraction.cc:270] Processed file [60/67]
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.963173 14404 feature_extraction.cc:273]   Name:            00059._c.png
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.963199 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.963214 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.963230 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:17 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:17.963255 14404 feature_extraction.cc:294]   Features:        8292 (SIFT)
+17:41:19 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:19.761809 14404 feature_extraction.cc:270] Processed file [61/67]
+17:41:19 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:19.761927 14404 feature_extraction.cc:273]   Name:            00061._c.png
+17:41:19 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:19.761948 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:19 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:19.761963 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:19 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:19.761981 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:19 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:19.762000 14404 feature_extraction.cc:294]   Features:        8439 (SIFT)
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.502176 14404 feature_extraction.cc:270] Processed file [62/67]
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.502283 14404 feature_extraction.cc:273]   Name:            00062._c.png
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.502302 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.502316 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.502339 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.502362 14404 feature_extraction.cc:294]   Features:        13034 (SIFT)
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.667391 14404 feature_extraction.cc:270] Processed file [63/67]
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.667511 14404 feature_extraction.cc:273]   Name:            00065._c.png
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.667526 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.667538 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.667550 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.667565 14404 feature_extraction.cc:294]   Features:        3128 (SIFT)
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.779006 14404 feature_extraction.cc:270] Processed file [64/67]
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.779115 14404 feature_extraction.cc:273]   Name:            00064._c.png
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.779132 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.779141 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.779152 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:20 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:20.779168 14404 feature_extraction.cc:294]   Features:        5610 (SIFT)
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.005764 14404 feature_extraction.cc:270] Processed file [65/67]
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.005868 14404 feature_extraction.cc:273]   Name:            00063._c.png
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.005888 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.005899 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.005914 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.005932 14404 feature_extraction.cc:294]   Features:        15256 (SIFT)
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.385755 14404 feature_extraction.cc:270] Processed file [66/67]
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.385851 14404 feature_extraction.cc:273]   Name:            00067._c.png
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.385868 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.385951 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.385967 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.385986 14404 feature_extraction.cc:294]   Features:        7531 (SIFT)
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.659474 14404 feature_extraction.cc:270] Processed file [67/67]
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.659624 14404 feature_extraction.cc:273]   Name:            00066._c.png
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.659648 14404 feature_extraction.cc:282]   Dimensions:      2736 x 1540
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.659664 14404 feature_extraction.cc:285]   Camera:          #1 - SIMPLE_RADIAL
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.659680 14404 feature_extraction.cc:289]   Focal Length:    3283.20px
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.659702 14404 feature_extraction.cc:294]   Features:        10785 (SIFT)
+17:41:21 [DEBUG] sfm.colmap_backend:   [feature_extractor] I20260806 17:41:21.717505 18920 timer.cc:90] Elapsed time: 0.622 [minutes]
+17:41:21 [INFO] sfm.colmap_backend: [COLMAP] [2/3] Matching  [exhaustive]…
+17:41:21 [DEBUG] sfm.colmap_backend: [COLMAP] C:\tools\colmap\bin\colmap.exe exhaustive_matcher --database_path paper_out\colmap_workspace\database.db --FeatureMatching.use_gpu 0
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.109710  2940 feature_matching.cc:195] === Feature matching & geometric verification ===
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112356 22024 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112397 34076 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112415 28380 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112387 11896 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112388  4664 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112366 38136 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112515 33816 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112410 36740 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112576 15920 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112415 34484 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.112370 24456 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.113156  1396 sift.cc:1565] Creating SIFT CPU feature matcher
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.113490  2940 pairing.cc:180] Generating exhaustive image pairs...
+17:41:22 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:41:22.113526  2940 pairing.cc:213] Processing block [1/2, 1/2]
+17:43:20 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:43:20.176202  2940 feature_matching.cc:217] in 118.063s
+17:43:20 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:43:20.176773  2940 pairing.cc:213] Processing block [1/2, 2/2]
+17:43:35 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:43:35.505607  2940 feature_matching.cc:217] in 15.329s
+17:43:35 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:43:35.505705  2940 pairing.cc:213] Processing block [2/2, 1/2]
+17:44:41 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:44:41.815532  2940 feature_matching.cc:217] in 66.310s
+17:44:41 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:44:41.815631  2940 pairing.cc:213] Processing block [2/2, 2/2]
+17:44:54 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:44:54.825247  2940 feature_matching.cc:217] in 13.010s
+17:44:54 [DEBUG] sfm.colmap_backend:   [matcher] I20260806 17:44:54.825313  2940 timer.cc:90] Elapsed time: 3.545 [minutes]
+17:44:54 [INFO] sfm.colmap_backend: [COLMAP] [3/3] Incremental mapper…
+17:44:54 [DEBUG] sfm.colmap_backend: [COLMAP] C:\tools\colmap\bin\colmap.exe mapper --database_path paper_out\colmap_workspace\database.db --image_path C:\sfm_daten\buddha67 --output_path paper_out\colmap_workspace\sparse --Mapper.ba_refine_focal_length 1 --Mapper.ba_refine_extra_params 1
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.012175 30228 incremental_pipeline.cc:278] Loading database
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.014081 30228 database_cache.cc:72] Loading rigs...
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.014153 30228 database_cache.cc:82]  1 in 0.000s
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.014176 30228 database_cache.cc:90] Loading cameras...
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.014218 30228 database_cache.cc:108]  1 in 0.000s
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.014232 30228 database_cache.cc:116] Loading frames...
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.014369 30228 database_cache.cc:126]  67 in 0.000s
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.014386 30228 database_cache.cc:134] Loading matches...
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.020287 30228 database_cache.cc:139]  866 in 0.006s
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.020365 30228 database_cache.cc:147] Loading images...
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.044568 30228 database_cache.cc:241]  67 in 0.024s (connected 67, loaded 67)
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.044688 30228 database_cache.cc:255] Loading pose priors...
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.044738 30228 database_cache.cc:263]  0 in 0.000s
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.044752 30228 database_cache.cc:271] Building correspondence graph...
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.133041 30228 database_cache.cc:300]  in 0.088s (ignored 0)
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.133160 30228 timer.cc:90] Elapsed time: 0.002 [minutes]
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.140311 30228 incremental_pipeline.cc:390] Finding good initial image pair
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.237703 30228 incremental_pipeline.cc:414] Registering initial image pair #21 and #24
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.256319 30228 incremental_pipeline.cc:432] Global bundle adjustment
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.721422 30228 incremental_pipeline.cc:537] Registering image #34 (num_reg_frames=2)
+17:44:55 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:55.721505 30228 incremental_pipeline.cc:540] => Image sees 1585 / 6670 points
+17:44:56 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:56.051756 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:44:56 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:56.191129 30228 incremental_pipeline.cc:537] Registering image #12 (num_reg_frames=3)
+17:44:56 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:56.191199 30228 incremental_pipeline.cc:540] => Image sees 2259 / 7106 points
+17:44:56 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:56.491548 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:44:56 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:56.684123 30228 incremental_pipeline.cc:537] Registering image #42 (num_reg_frames=4)
+17:44:56 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:56.684189 30228 incremental_pipeline.cc:540] => Image sees 1816 / 6847 points
+17:44:57 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:57.093573 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:44:57 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:57.279935 30228 incremental_pipeline.cc:537] Registering image #67 (num_reg_frames=5)
+17:44:57 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:57.279998 30228 incremental_pipeline.cc:540] => Image sees 1000 / 4468 points
+17:44:57 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:57.869620 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:44:58 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:58.120442 30228 incremental_pipeline.cc:537] Registering image #5 (num_reg_frames=6)
+17:44:58 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:58.120506 30228 incremental_pipeline.cc:540] => Image sees 2466 / 4831 points
+17:44:58 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:58.404595 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:44:58 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:58.637574 30228 incremental_pipeline.cc:537] Registering image #17 (num_reg_frames=7)
+17:44:58 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:58.637634 30228 incremental_pipeline.cc:540] => Image sees 2945 / 4684 points
+17:44:58 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:58.974300 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:44:59 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:59.254929 30228 incremental_pipeline.cc:537] Registering image #53 (num_reg_frames=8)
+17:44:59 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:59.254997 30228 incremental_pipeline.cc:540] => Image sees 1127 / 4186 points
+17:44:59 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:59.581462 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:44:59 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:59.851261 30228 incremental_pipeline.cc:537] Registering image #26 (num_reg_frames=9)
+17:44:59 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:44:59.851326 30228 incremental_pipeline.cc:540] => Image sees 1687 / 4600 points
+17:45:00 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:00.565654 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:00 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:00.879408 30228 incremental_pipeline.cc:537] Registering image #4 (num_reg_frames=10)
+17:45:00 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:00.879474 30228 incremental_pipeline.cc:540] => Image sees 1944 / 3617 points
+17:45:01 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:01.255291 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:01 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:01.581346 30228 incremental_pipeline.cc:537] Registering image #41 (num_reg_frames=11)
+17:45:01 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:01.581412 30228 incremental_pipeline.cc:540] => Image sees 1234 / 2254 points
+17:45:01 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:01.852627 30228 incremental_pipeline.cc:537] Registering image #35 (num_reg_frames=12)
+17:45:01 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:01.852694 30228 incremental_pipeline.cc:540] => Image sees 1688 / 5794 points
+17:45:02 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:02.112677 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:02 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:02.470414 30228 incremental_pipeline.cc:537] Registering image #15 (num_reg_frames=13)
+17:45:02 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:02.470494 30228 incremental_pipeline.cc:540] => Image sees 1653 / 5152 points
+17:45:02 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:02.903846 30228 incremental_pipeline.cc:537] Registering image #59 (num_reg_frames=14)
+17:45:02 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:02.903910 30228 incremental_pipeline.cc:540] => Image sees 1197 / 2768 points
+17:45:03 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:03.269851 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:03 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:03.717004 30228 incremental_pipeline.cc:537] Registering image #36 (num_reg_frames=15)
+17:45:03 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:03.717072 30228 incremental_pipeline.cc:540] => Image sees 1653 / 3128 points
+17:45:04 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:04.347551 30228 incremental_pipeline.cc:537] Registering image #32 (num_reg_frames=16)
+17:45:04 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:04.347618 30228 incremental_pipeline.cc:540] => Image sees 2606 / 5899 points
+17:45:04 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:04.689202 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:05 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:05.235760 30228 incremental_pipeline.cc:537] Registering image #22 (num_reg_frames=17)
+17:45:05 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:05.235840 30228 incremental_pipeline.cc:540] => Image sees 2278 / 5132 points
+17:45:05 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:05.694352 30228 incremental_pipeline.cc:537] Registering image #33 (num_reg_frames=18)
+17:45:05 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:05.694428 30228 incremental_pipeline.cc:540] => Image sees 2029 / 4853 points
+17:45:06 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:06.012818 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:06 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:06.563720 30228 incremental_pipeline.cc:537] Registering image #43 (num_reg_frames=19)
+17:45:06 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:06.563802 30228 incremental_pipeline.cc:540] => Image sees 1506 / 6631 points
+17:45:07 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:07.090864 30228 incremental_pipeline.cc:537] Registering image #65 (num_reg_frames=20)
+17:45:07 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:07.090932 30228 incremental_pipeline.cc:540] => Image sees 2566 / 6951 points
+17:45:07 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:07.353101 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:07 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:07.981294 30228 incremental_pipeline.cc:537] Registering image #23 (num_reg_frames=21)
+17:45:07 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:07.981360 30228 incremental_pipeline.cc:540] => Image sees 1933 / 4444 points
+17:45:08 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:08.583082 30228 incremental_pipeline.cc:537] Registering image #62 (num_reg_frames=22)
+17:45:08 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:08.583144 30228 incremental_pipeline.cc:540] => Image sees 2206 / 6720 points
+17:45:08 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:08.927381 30228 incremental_pipeline.cc:537] Registering image #44 (num_reg_frames=23)
+17:45:08 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:08.927445 30228 incremental_pipeline.cc:540] => Image sees 2311 / 5918 points
+17:45:09 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:09.206840 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:09 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:09.929153 30228 incremental_pipeline.cc:537] Registering image #3 (num_reg_frames=24)
+17:45:09 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:09.929217 30228 incremental_pipeline.cc:540] => Image sees 891 / 2431 points
+17:45:10 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:10.432098 30228 incremental_pipeline.cc:537] Registering image #54 (num_reg_frames=25)
+17:45:10 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:10.432168 30228 incremental_pipeline.cc:540] => Image sees 1726 / 3882 points
+17:45:11 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:11.060623 30228 incremental_pipeline.cc:537] Registering image #9 (num_reg_frames=26)
+17:45:11 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:11.060687 30228 incremental_pipeline.cc:540] => Image sees 2054 / 4028 points
+17:45:11 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:11.436619 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:12 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:12.259452 30228 incremental_pipeline.cc:537] Registering image #40 (num_reg_frames=27)
+17:45:12 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:12.259518 30228 incremental_pipeline.cc:540] => Image sees 2606 / 4238 points
+17:45:12 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:12.821204 30228 incremental_pipeline.cc:537] Registering image #31 (num_reg_frames=28)
+17:45:12 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:12.821344 30228 incremental_pipeline.cc:540] => Image sees 1374 / 3523 points
+17:45:13 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:13.192760 30228 incremental_pipeline.cc:537] Registering image #56 (num_reg_frames=29)
+17:45:13 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:13.192829 30228 incremental_pipeline.cc:540] => Image sees 1986 / 3310 points
+17:45:13 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:13.480938 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:14 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:14.391575 30228 incremental_pipeline.cc:537] Registering image #8 (num_reg_frames=30)
+17:45:14 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:14.391638 30228 incremental_pipeline.cc:540] => Image sees 993 / 2194 points
+17:45:14 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:14.949350 30228 incremental_pipeline.cc:537] Registering image #18 (num_reg_frames=31)
+17:45:14 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:14.949411 30228 incremental_pipeline.cc:540] => Image sees 1527 / 3107 points
+17:45:15 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:15.295736 30228 incremental_pipeline.cc:537] Registering image #20 (num_reg_frames=32)
+17:45:15 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:15.295809 30228 incremental_pipeline.cc:540] => Image sees 1904 / 3458 points
+17:45:15 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:15.657673 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:16 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:16.653000 30228 incremental_pipeline.cc:537] Registering image #66 (num_reg_frames=33)
+17:45:16 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:16.653068 30228 incremental_pipeline.cc:540] => Image sees 666 / 1859 points
+17:45:17 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:17.047378 30228 incremental_pipeline.cc:537] Registering image #50 (num_reg_frames=34)
+17:45:17 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:17.047475 30228 incremental_pipeline.cc:540] => Image sees 745 / 928 points
+17:45:17 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:17.386661 30228 incremental_pipeline.cc:537] Registering image #25 (num_reg_frames=35)
+17:45:17 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:17.386727 30228 incremental_pipeline.cc:540] => Image sees 435 / 1523 points
+17:45:17 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:17.633788 30228 incremental_pipeline.cc:537] Registering image #51 (num_reg_frames=36)
+17:45:17 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:17.633855 30228 incremental_pipeline.cc:540] => Image sees 735 / 3024 points
+17:45:17 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:17.784394 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:18 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:18.797349 30228 incremental_pipeline.cc:537] Registering image #19 (num_reg_frames=37)
+17:45:18 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:18.797418 30228 incremental_pipeline.cc:540] => Image sees 491 / 1876 points
+17:45:19 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:19.016330 30228 incremental_pipeline.cc:537] Registering image #7 (num_reg_frames=38)
+17:45:19 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:19.016398 30228 incremental_pipeline.cc:540] => Image sees 623 / 2926 points
+17:45:19 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:19.296845 30228 incremental_pipeline.cc:537] Registering image #27 (num_reg_frames=39)
+17:45:19 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:19.296912 30228 incremental_pipeline.cc:540] => Image sees 570 / 1811 points
+17:45:19 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:19.529035 30228 incremental_pipeline.cc:537] Registering image #30 (num_reg_frames=40)
+17:45:19 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:19.529097 30228 incremental_pipeline.cc:540] => Image sees 742 / 2790 points
+17:45:19 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:19.744044 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:20 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:20.897236 30228 incremental_pipeline.cc:537] Registering image #38 (num_reg_frames=41)
+17:45:20 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:20.897302 30228 incremental_pipeline.cc:540] => Image sees 753 / 1704 points
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.114983 30228 incremental_pipeline.cc:537] Registering image #46 (num_reg_frames=42)
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.115047 30228 incremental_pipeline.cc:540] => Image sees 848 / 1871 points
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.336278 30228 incremental_pipeline.cc:537] Registering image #39 (num_reg_frames=43)
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.336338 30228 incremental_pipeline.cc:540] => Image sees 564 / 3297 points
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.562113 30228 incremental_pipeline.cc:537] Registering image #55 (num_reg_frames=44)
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.562175 30228 incremental_pipeline.cc:540] => Image sees 586 / 1844 points
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.750803 30228 incremental_pipeline.cc:537] Registering image #58 (num_reg_frames=45)
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.750868 30228 incremental_pipeline.cc:540] => Image sees 954 / 2509 points
+17:45:21 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:21.956025 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.173948 30228 incremental_pipeline.cc:537] Registering image #47 (num_reg_frames=46)
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.174048 30228 incremental_pipeline.cc:540] => Image sees 819 / 1308 points
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.380793 30228 incremental_pipeline.cc:537] Registering image #49 (num_reg_frames=47)
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.380866 30228 incremental_pipeline.cc:540] => Image sees 571 / 1017 points
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.661624 30228 incremental_pipeline.cc:537] Registering image #13 (num_reg_frames=48)
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.661688 30228 incremental_pipeline.cc:540] => Image sees 627 / 3003 points
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.935543 30228 incremental_pipeline.cc:537] Registering image #16 (num_reg_frames=49)
+17:45:23 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:23.935607 30228 incremental_pipeline.cc:540] => Image sees 717 / 5244 points
+17:45:24 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:24.261145 30228 incremental_pipeline.cc:537] Registering image #6 (num_reg_frames=50)
+17:45:24 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:24.261205 30228 incremental_pipeline.cc:540] => Image sees 1193 / 3925 points
+17:45:24 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:24.480103 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:25 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:25.928753 30228 incremental_pipeline.cc:537] Registering image #2 (num_reg_frames=51)
+17:45:25 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:25.928842 30228 incremental_pipeline.cc:540] => Image sees 1588 / 5206 points
+17:45:26 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:26.229606 30228 incremental_pipeline.cc:537] Registering image #57 (num_reg_frames=52)
+17:45:26 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:26.229672 30228 incremental_pipeline.cc:540] => Image sees 2325 / 4761 points
+17:45:26 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:26.598972 30228 incremental_pipeline.cc:537] Registering image #45 (num_reg_frames=53)
+17:45:26 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:26.599048 30228 incremental_pipeline.cc:540] => Image sees 990 / 4031 points
+17:45:26 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:26.898590 30228 incremental_pipeline.cc:537] Registering image #48 (num_reg_frames=54)
+17:45:26 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:26.898657 30228 incremental_pipeline.cc:540] => Image sees 1321 / 4205 points
+17:45:27 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:27.333212 30228 incremental_pipeline.cc:537] Registering image #52 (num_reg_frames=55)
+17:45:27 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:27.333277 30228 incremental_pipeline.cc:540] => Image sees 584 / 3869 points
+17:45:27 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:27.581304 30228 incremental_pipeline.cc:537] Registering image #61 (num_reg_frames=56)
+17:45:27 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:27.581423 30228 incremental_pipeline.cc:540] => Image sees 993 / 3699 points
+17:45:27 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:27.910909 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:29 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:29.487694 30228 incremental_pipeline.cc:537] Registering image #28 (num_reg_frames=57)
+17:45:29 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:29.487764 30228 incremental_pipeline.cc:540] => Image sees 1336 / 3726 points
+17:45:29 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:29.800840 30228 incremental_pipeline.cc:537] Registering image #60 (num_reg_frames=58)
+17:45:29 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:29.800904 30228 incremental_pipeline.cc:540] => Image sees 1819 / 3021 points
+17:45:30 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:30.236840 30228 incremental_pipeline.cc:537] Registering image #11 (num_reg_frames=59)
+17:45:30 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:30.236915 30228 incremental_pipeline.cc:540] => Image sees 642 / 2493 points
+17:45:30 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:30.499858 30228 incremental_pipeline.cc:537] Registering image #29 (num_reg_frames=60)
+17:45:30 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:30.499930 30228 incremental_pipeline.cc:540] => Image sees 898 / 2517 points
+17:45:30 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:30.809994 30228 incremental_pipeline.cc:537] Registering image #64 (num_reg_frames=61)
+17:45:30 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:30.810062 30228 incremental_pipeline.cc:540] => Image sees 640 / 1917 points
+17:45:31 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:31.161063 30228 incremental_pipeline.cc:537] Registering image #1 (num_reg_frames=62)
+17:45:31 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:31.161130 30228 incremental_pipeline.cc:540] => Image sees 498 / 1306 points
+17:45:31 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:31.303853 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:32 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:32.777109 30228 incremental_pipeline.cc:537] Registering image #10 (num_reg_frames=63)
+17:45:32 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:32.777173 30228 incremental_pipeline.cc:540] => Image sees 676 / 1812 points
+17:45:33 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:33.012164 30228 incremental_pipeline.cc:537] Registering image #37 (num_reg_frames=64)
+17:45:33 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:33.012227 30228 incremental_pipeline.cc:540] => Image sees 583 / 1366 points
+17:45:33 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:33.230317 30228 incremental_pipeline.cc:537] Registering image #14 (num_reg_frames=65)
+17:45:33 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:33.230381 30228 incremental_pipeline.cc:540] => Image sees 439 / 938 points
+17:45:33 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:33.390110 30228 incremental_pipeline.cc:537] Registering image #63 (num_reg_frames=66)
+17:45:33 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:33.390175 30228 incremental_pipeline.cc:540] => Image sees 242 / 365 points
+17:45:33 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:33.540792 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:35 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:35.053953 30228 incremental_pipeline.cc:79] Retriangulation and Global bundle adjustment
+17:45:36 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:36.574490 30228 incremental_pipeline.cc:723] Keeping successful reconstruction
+17:45:36 [DEBUG] sfm.colmap_backend:   [mapper] I20260806 17:45:36.713625 30228 timer.cc:90] Elapsed time: 0.693 [minutes]
+17:45:36 [INFO] sfm.colmap_backend: [COLMAP] Best model : paper_out\colmap_workspace\sparse\0
+17:45:36 [INFO] sfm.point_cloud: Saved 35,538 points → paper_out\colmap.ply  (520.8 KB)
+17:45:36 [INFO] sfm.colmap_backend: [COLMAP] Sparse PLY : paper_out\colmap.ply  (35,538 pts)
+17:45:36 [INFO] __main__: 
+==============================================================
+17:45:36 [INFO] __main__:   COLMAP pipeline complete in 293.4s
+17:45:36 [INFO] __main__:   Sparse PLY : C:\Users\Rudolf\ZEUG\Studium\Master IIW\1. Semester\3d Datenvisualosierung\sfm_simple\sfm-pub\paper_out\colmap.ply
+17:45:36 [INFO] __main__: ==============================================================

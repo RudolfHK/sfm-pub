@@ -24,8 +24,10 @@ formtreue Punktwolke aus 40.233 Punkten bei 1,58 px mittlerem Reprojektionsfehle
 Vergleich mit der Ground Truth zeigt jedoch Schwächen, die diese pipeline-eigene Kennzahl
 nicht anzeigt: Die geschätzte Brennweite liegt 47 % neben dem wahren Wert, die
 Kameraorientierungen weichen im Median um 6,2° ab, und zwei identische Aufrufe liefern
-unterschiedliche Ergebnisse. Für jede dieser Grenzen benennt der Beitrag die Ursache im
-Code.
+unterschiedliche Ergebnisse. COLMAP auf denselben Bildern, derselben CPU und mit derselben
+Merkmalszahl erreicht dagegen 0,2 % Brennweiten- und 0,11° Orientierungsfehler in einem
+Viertel der Laufzeit. Die Genauigkeit steckt also in den Daten, und die Lücke liegt in der
+Umsetzung. Für jede der gefundenen Grenzen benennt der Beitrag die Ursache im Code.
 {: .abstract}
 
 **Keywords:** Structure-from-Motion; Photogrammetrie; Python; Punktwolke; Bundle Adjustment; Visualisierung; Studierendenprojekt
@@ -278,14 +280,14 @@ Standardwert `max_dense_pts`, der ohne Hinweis im Log abschneidet und über die
 Kommandozeile nicht erreichbar ist. Die Punktzahl einer dichten Wolke trägt in dieser
 Fassung folglich keine Qualitätsinformation.
 
-Als Referenzsystem ist COLMAP [2] vorgesehen und über denselben Einstiegspunkt
-(`--backend colmap`) auf identischen Eingabedaten aufrufbar. Auf der Messmaschine ist
-allerdings kein COLMAP-Binary installiert. Die Pipeline meldet das sauber, liefert aber
-keine Vergleichsdaten, so dass ein quantitativer Direktvergleich in dieser Fassung fehlt.
-Als Ersatz dient ein strengerer Maßstab: Der Datensatz bringt Ground-Truth-Posen mit, und
-Abschnitt 4.3 vermisst die Rekonstruktion direkt gegen diese Referenz. Ein Vergleich gegen
-absolute Wahrheit ist aussagekräftiger als ein Vergleich gegen ein zweites SfM-System,
-ersetzt den Laufzeitvergleich mit COLMAP jedoch nicht.
+Als Referenzsystem dient COLMAP [2], aufgerufen über denselben Einstiegspunkt
+(`--backend colmap`) auf identischen Eingabedaten. Das Repository startet dabei
+nacheinander Merkmalsextraktion, erschöpfendes Matching und den inkrementellen Mapper und
+liest das Ergebnis in dasselbe Ausgabeformat zurück. Verwendet wurde COLMAP 4.1.1 ohne
+CUDA, so dass beide Systeme ausschließlich auf der CPU desselben Rechners arbeiten. Der
+Vergleich in Abschnitt 4.3 stützt sich damit auf zwei unabhängige Maßstäbe: die
+mitgelieferten Ground-Truth-Posen und ein etabliertes zweites SfM-System auf denselben
+Bildern.
 
 ## 4  Ergebnisse
 
@@ -344,22 +346,28 @@ stärker ins Gewicht fällt, als der Anteil vermuten lässt.
 Vor jedem Fehlermaß richtet eine Sim(3)-Anpassung nach Umeyama die geschätzten
 Kamerazentren auf die Ground Truth aus, da monokulares SfM skalenfrei ist. Positionsfehler
 sind auf die Ausdehnung der Ground-Truth-Trajektorie normiert, damit Läufe mit
-unterschiedlich vielen registrierten Kameras vergleichbar bleiben.
+unterschiedlich vielen registrierten Kameras vergleichbar bleiben. Als Referenzsystem läuft
+COLMAP über denselben Einstiegspunkt auf denselben Bildern, mit derselben Merkmalszahl,
+ebenfalls erschöpfendem Matching, ohne GPU und auf demselben Rechner. Seine Kameraposen
+werden mit demselben Skript und derselben Ausrichtung bewertet wie die eigenen.
 
-| Kennzahl | Basiskonfiguration | Konfiguration des Referenzlaufs |
-|---|---:|---:|
-| Registrierte Kameras | 67 von 67 | 67 von 67 |
-| 3D-Punkte | 39.721 | 40.232 |
-| Mittlere Tracklänge | 2,70 | 2,61 |
-| Reprojektions-RMSE | 2,08 px | 1,60 px |
-| Brennweitenfehler | +47,0 % | +47,0 % |
-| Rotationsfehler, Median und Maximum | 6,29° / 20,28° | 6,23° / 16,48° |
-| Positionsfehler, Median und Maximum | 2,06 % / 11,60 % | 2,24 % / 9,79 % |
-| Laufzeit | 1.135,5 s | 1.761,3 s (davon 300,6 s dichte Rekonstruktion) |
-| Spitzenspeicher | 1.470 MB | 1.541 MB |
+| Kennzahl | Basiskonfiguration | Referenzlauf | COLMAP |
+|---|---:|---:|---:|
+| Registrierte Kameras | 67 von 67 | 67 von 67 | 67 von 67 |
+| 3D-Punkte | 39.721 | 40.232 | 35.538 |
+| Mittlere Tracklänge | 2,70 | 2,61 | 4,69 |
+| Reprojektions-RMSE | 2,08 px | 1,60 px | nicht exportiert |
+| Geschätzte Brennweite | 2.736,0 px | 2.736,0 px | 1.857,5 px |
+| Brennweitenfehler | +47,0 % | +47,0 % | -0,2 % |
+| Rotationsfehler, Median und Maximum | 6,29° / 20,28° | 6,23° / 16,48° | 0,11° / 0,20° |
+| Positionsfehler, Median und Maximum | 2,06 % / 11,60 % | 2,24 % / 9,79 % | 0,02 % / 0,05 % |
+| Laufzeit | 1.135,5 s | 1.761,3 s (davon 300,6 s dicht) | 293 s |
+| Spitzenspeicher | 1.470 MB | 1.541 MB | nicht gemessen |
 
-**Tab. 3:** Gemessene Kennzahlen der beiden 67-Bild-Konfigurationen gegen Ground Truth.
-Die rechte Spalte entspricht der Konfiguration, aus der die Abbildungen stammen.
+**Tab. 3:** Gemessene Kennzahlen gegen Ground Truth. Die Ground-Truth-Brennweite beträgt
+1.860,9 px. Basiskonfiguration und COLMAP verwenden beide 8.000 Merkmale je Bild und sind
+damit direkt vergleichbar; der Referenzlauf, aus dem die Abbildungen stammen, arbeitet mit
+12.000 Merkmalen.
 
 Das zentrale Ergebnis steht in der Zeile zur Brennweite. Die Bilder des Datensatzes tragen
 keine EXIF-Daten, weshalb die Intrinsik-Schätzung auf die Heuristik `focal = max(W, H)`
@@ -374,12 +382,33 @@ der falschen Brennweite bereits in sich konsistent ist. Startpose, Triangulation
 wurden alle mit 2.736 px gerechnet, die Struktur ist entsprechend projektiv verformt, und
 das BA hat nichts mehr zu gewinnen.
 
+COLMAP entkräftet auf denselben Bildern jede Ausrede, die man dafür anführen könnte. Es
+startet ebenfalls ohne Kalibrierung, verfeinert die Brennweite aber im eigenen Bundle
+Adjustment bis auf 1.857,5 px und liegt damit 0,2 % neben der Ground Truth. Der Datensatz
+enthält also genügend Information, um die Brennweite zu bestimmen; die eigene Umsetzung
+holt sie nur nicht heraus. Entsprechend fallen die Posenfehler aus: 0,11° gegenüber 6,29°
+im Median und 0,02 % gegenüber 2,06 % bei der Position. Ein zweiter Unterschied erklärt
+einen Teil davon. COLMAP verknüpft im Mittel 4,69 Beobachtungen zu einem 3D-Punkt, die
+eigene Pipeline nur 2,70; längere Tracks binden jede Kamera an mehr gemeinsame Struktur und
+machen die Lösung steifer.
+
+![Vergleich mit COLMAP](figures/fig12_vergleich_colmap.png)
+
+**Fig. 12:** Dieselben 67 Bilder, links die eigene Pipeline mit 39.721 Punkten, rechts
+COLMAP mit 35.538 Punkten. Beide Wolken sind auf ihre eigene Ausdehnung normiert, weil
+monokulares SfM die absolute Skala nicht bestimmt, und aus derselben Richtung gerendert.
+Die eigene Wolke enthält mehr Punkte, zeichnet die genoppte Oberfläche aber diffuser; bei
+COLMAP bleiben die einzelnen Noppen als getrennte Strukturen erkennbar. Mehr Punkte
+bedeuten hier also nicht mehr Information.
+
 Daraus folgt die methodisch wichtigste Aussage dieses Beitrags. Die pipeline-eigene
 Qualitätskennzahl, der Reprojektionsfehler, sieht mit 1,6 px genau dann gut aus, wenn die
 Geometrie um mehr als 6° verdreht ist. Fig. 8 zeigt denselben Sachverhalt von der anderen
 Seite, denn dort konvergiert das BA zufrieden, während der Fehler steigt. Wer allein gegen
 den Reprojektionsfehler optimiert, optimiert also gegen eine Metrik, die diesen Fehlermodus
-prinzipiell nicht sehen kann. Erst der Vergleich gegen die Ground Truth macht ihn sichtbar.
+prinzipiell nicht sehen kann. Sichtbar wird er erst im Vergleich gegen die Ground Truth,
+und ein zweites System auf denselben Daten zeigt zusätzlich, dass der Fehler vermeidbar
+ist.
 
 ### 4.4  Reproduzierbarkeit
 
@@ -392,7 +421,7 @@ allen vier relevanten Stellen fest gesetzt, weshalb nur die OpenCV-Seite betroff
 
 ![Pipeline-Zusammenfassung Lauf A](figures/run_a/abb13a_pipeline_summary_lauf_a.png)
 
-**Fig. 12:** Dieselbe Zusammenfassung für Lauf A, also identischer Befehl auf identischen
+**Fig. 13:** Dieselbe Zusammenfassung für Lauf A, also identischer Befehl auf identischen
 Bildern, einen Tag früher ausgeführt. Kennzahlen und Kameraverteilung stimmen im Vergleich
 mit Fig. 10 weitgehend überein, die BA-Konvergenzkurve verläuft jedoch sichtbar anders und
 endet bei 10,2 px statt bei 10,9 px. Bei 67 Bildern ist der Effekt also gedämpft, aber
@@ -410,7 +439,7 @@ nicht verschwunden.
 
 ![Skalierung](figures/abb11_skalierung.png)
 
-**Fig. 13:** Links die Gesamtlaufzeit und der Matching-Anteil über der Bildzahl, verglichen
+**Fig. 14:** Links die Gesamtlaufzeit und der Matching-Anteil über der Bildzahl, verglichen
 mit einer quadratischen Referenzkurve. Rechts der Anteil der einzelnen Stufen an der
 Gesamtlaufzeit. Die Kosten pro Bildpaar bleiben mit 0,505 s, 0,497 s und 0,469 s praktisch
 konstant, weshalb die Gesamtzeit exakt der quadratisch wachsenden Paarzahl folgt. Der
@@ -461,8 +490,9 @@ Ursache im Code benennen.
 nicht, weil die Rekonstruktion bei dieser Brennweite bereits in sich konsistent ist, und
 eine Option zur Vorgabe einer bekannten Kalibrierung existiert auf der Kommandozeile nicht.
 Die gesamte Rekonstruktion ist dadurch projektiv verformt, ohne dass die interne
-Fehlermetrik anschlägt. COLMAP umgeht dieses Problem mit einer Brennweitensuche zur
-Initialisierung.
+Fehlermetrik anschlägt. Dass es sich um ein Implementierungsproblem und nicht um eine
+Grenze der Daten handelt, zeigt COLMAP auf denselben Bildern: Es beginnt ebenfalls ohne
+Kalibrierung und landet nach eigener Verfeinerung 0,2 % neben der Ground Truth.
 
 **Die Ergebnisse sind nicht reproduzierbar.** Weil der Zufallszahlengenerator von OpenCV
 nie gesetzt wird, schwankt die Zahl registrierter Kameras zwischen identischen Läufen um
@@ -482,8 +512,12 @@ Messmaschine fehlt.
 
 **Die Tracks sind zu kurz.** Bei einer mittleren Tracklänge von 2,6 bis 2,7 stammt die
 Mehrzahl der Punkte aus nur zwei Bildern und ist damit geometrisch schwach abgesichert, was
-Fig. 9 als Hauptquelle der Fehlerstreuung ausweist. Etwa 8 % der Punkte sind zudem exakte
-Duplikate, also Tracks, die hätten verschmelzen müssen. Die dafür vorgesehene Option zeigt
+Fig. 9 als Hauptquelle der Fehlerstreuung ausweist. COLMAP erreicht auf denselben Bildern
+4,69 Beobachtungen je Punkt, also fast das Doppelte, und zwar bei weniger Punkten
+insgesamt. Der Unterschied entsteht nicht beim Detektor, sondern in der Buchführung: Wo
+Korrespondenzen über mehrere Bilder hinweg zu einem Track verschmelzen, stützt jeder Punkt
+mehrere Kameras gleichzeitig. Passend dazu sind etwa 8 % der eigenen Punkte exakte
+Duplikate, also Tracks, die hätten verschmelzen müssen; die dafür vorgesehene Option zeigt
 im Test keinen messbaren Nutzen.
 
 **Ohne Schleifenschluss akkumuliert die Rekonstruktion Drift.** Die Registrierung hängt
@@ -512,13 +546,16 @@ Installationshinweis. Beides ist an anderer Stelle im Projekt bereits richtig ge
 bei der Vorabprüfung des COLMAP-Backends, und müsste lediglich übertragen werden.
 
 Der Vergleich mit COLMAP fällt nach allem Gemessenen weniger algorithmisch als praktisch
-aus. Die Grundstruktur ist in beiden Systemen ähnlich; der Unterschied liegt in der
-Implementierungsreife, also in einem effizienten Sparse-Solver, in Parallelisierung, in
-ausgereifter Ausreißerbehandlung und in durchdachten Startwerten. Die Abwägung lautet damit:
-didaktische Transparenz und volle Kontrolle auf der einen Seite, Robustheit und
-Skalierbarkeit auf der anderen. Diese Einordnung stützt sich hier auf die Literatur und auf
-die eigenen Messungen gegen Ground Truth, nicht auf einen eigenen Vergleichslauf mit
-COLMAP.
+aus. Die Grundstruktur ist in beiden Systemen ähnlich, und beide liefen hier auf derselben
+CPU, mit denselben Bildern und derselben Merkmalszahl. Trotzdem trennen sie Größenordnungen:
+0,11° gegenüber 6,29° Orientierungsfehler, 0,2 % gegenüber 47 % Brennweitenfehler, dazu
+293 s gegenüber 1.136 s Laufzeit. Der Unterschied liegt nicht in der Wahl der Algorithmen,
+sondern in ihrer Ausführung, also in belastbaren Startwerten, in konsequenter
+Track-Verwaltung, in ausgereifter Ausreißerbehandlung und in einem für dieses Problem
+gebauten Solver. Die Abwägung lautet damit: didaktische Transparenz und volle Kontrolle auf
+der einen Seite, Genauigkeit und Geschwindigkeit auf der anderen. Bemerkenswert ist dabei,
+dass die eigene Pipeline mehr Punkte erzeugt als COLMAP und trotzdem deutlich ungenauer
+ist; Punktzahl allein ist als Qualitätsmaß wertlos.
 
 ## 6  Fazit
 
@@ -535,6 +572,13 @@ Brennweite 47 % danebenliegt und die Kameraorientierungen im Median um mehr als 
 verdreht sind. Sichtbar wird das erst im Vergleich gegen Ground Truth, und der erste
 Hinweis darauf kam aus einem Diagnosebild, nämlich der BA-Konvergenzkurve, die eben nicht
 fällt.
+
+COLMAP auf denselben Bildern liefert die Gegenprobe und macht aus dem Befund eine klare
+Aussage. Mit 0,11° Orientierungsfehler und 0,2 % Brennweitenfehler in einem Viertel der
+Laufzeit zeigt es, dass die Daten die Genauigkeit hergeben und die Lücke ausschließlich in
+der eigenen Umsetzung liegt. Genau das ist für ein Lernprojekt die nützlichste Form eines
+Ergebnisses, denn sie benennt nicht nur eine Grenze, sondern belegt, dass sie überwindbar
+ist.
 
 Für die Weiterarbeit ergibt sich daraus eine klare Reihenfolge. Zuerst muss der
 Zufallszahlengenerator von OpenCV gesetzt werden, da ohne Reproduzierbarkeit keine weitere
@@ -613,18 +657,23 @@ Matching, dichte Rekonstruktion aktiviert, Quelle `sfm_visualization_20260803_10
 | A4 | `figures/run_b/abb07c_reprojection_errors.png` | `03_reconstruction/reprojection_errors_00037._c.png` |
 
 **Lauf A**, identische Konfiguration, Quelle `sfm_visualization_20260802_153526`:
-Fig. 12 aus `00_summary/pipeline_summary.png`.
+Fig. 13 aus `00_summary/pipeline_summary.png`.
 
-**Selbst erzeugt:** Fig. 1 als Vektorgrafik (`figures/pipeline_overview.svg`), Fig. 13 über
-`paper/scripts/plot_scaling.py` aus den Messwerten in Tab. 4.
+**Selbst erzeugt:** Fig. 1 als Vektorgrafik (`figures/pipeline_overview.svg`), Fig. 12 über
+`paper/scripts/compare_ply.py` aus `eval_results/n67_base.ply` und `paper_out/colmap.ply`,
+Fig. 14 über `paper/scripts/plot_scaling.py` aus den Messwerten in Tab. 4.
 
-**Offene Punkte.** Der quantitative Vergleich mit COLMAP fehlt, weil auf der Messmaschine
-kein COLMAP-Binary installiert ist. Die Werkzeuge dafür sind vorhanden und laufen
-unmittelbar nach der Installation: `paper/scripts/compare_ply.py` für den
-Punktwolkenvergleich und `paper/scripts/benchmark.py` für die Kennzahlentabelle. Das
-Vorgehen ist Schritt für Schritt in `paper/COLMAP_HOWTO.md` beschrieben. Ebenfalls offen
-ist eine eigene Aufnahmeserie für den planaren oder texturarmen Grenzfall aus Abschnitt 5,
-die der Buddha-Datensatz nicht abbilden kann.
+**COLMAP-Vergleich.** COLMAP 4.1.1 ohne CUDA, aufgerufen als
+`run_sfm.py --backend colmap` auf denselben 67 Bildern mit 8.000 Merkmalen und
+erschöpfendem Matching. Die Kameraposen wurden mit `paper/scripts/colmap_to_cameras.py` in
+das Format von `--export-cameras` überführt und anschließend mit demselben Skript
+(`eval/gt_pose_eval.py`) und derselben Sim(3)-Ausrichtung gegen die Ground Truth bewertet
+wie die eigenen Läufe. Das vollständige Vorgehen steht in `paper/COLMAP_HOWTO.md`.
+
+**Offene Punkte.** Offen bleibt eine eigene Aufnahmeserie für den planaren oder
+texturarmen Grenzfall aus Abschnitt 5, die der Buddha-Datensatz nicht abbilden kann.
+Ebenfalls offen ist ein Speichervergleich, da für COLMAP kein Spitzenspeicher gemessen
+wurde.
 
 **Umsetzung des Style Guide.** Das Layout folgt
 `abstract/workshop_book_styleguide_2026/main.tex`: A4 mit 2,5 cm Rand, Segoe UI, Fließtext

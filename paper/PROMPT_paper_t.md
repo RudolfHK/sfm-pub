@@ -90,6 +90,46 @@ Bericht an die Autorenschaft aufgeführt.
 
 **Ausgabe:** Der Export wird neu erzeugt, das PDF liegt am Ende aktualisiert vor.
 
+## Runde 4: Kurzfassung auf sechs Seiten
+
+Der Workshop-Band begrenzt den Beitrag auf **sechs A4-Seiten einschließlich aller
+Abbildungen**. Die Langfassung `paper_t.md` bleibt unverändert erhalten; daneben entsteht
+`paper/paper_6p.md` mit demselben Layout und demselben PDF-Export.
+
+**Harte Streichungen** (nicht verhandelbar, vom Autor vorgegeben):
+
+- Keine Anhänge. Weder ergänzende Abbildungen noch Bildherkunft noch offene Punkte.
+- Abschnitte 4.1, 4.4, 4.5 und 4.6 der Langfassung entfallen ersatzlos.
+- 4.2 und 4.3 werden zu einem Ergebnisabschnitt zusammengezogen.
+- Von den Ergebnisabbildungen bleibt allein der Punktwolkenvergleich. Beide Wolken sollen
+  darin aus derselben Blickrichtung gezeigt werden.
+- Diskussion und Fazit werden gekürzt.
+- Abschnitte 2 und 3 werden so weit gekürzt, wie es die Seitenzahl verlangt.
+
+**Was trotz Kürzung erhalten bleiben muss**, weil es die Gutachten adressiert oder das
+Ergebnis trägt:
+
+1. Die Abgrenzung zwischen Bibliotheksaufruf und eigenem Code, samt Tabelle. Beide
+   Gutachter haben danach gefragt.
+2. Der Vergleich gegen Ground Truth und gegen COLMAP mit den gemessenen Zahlen.
+3. Der Befund zur Brennweite und die daraus folgende Aussage über die
+   Selbstauskunft der Pipeline.
+4. Zu jeder genannten Grenze die Ursache, nicht nur das Symptom.
+
+**Vorgehen bei der Kürzung:** Zuerst ganze Abschnitte streichen, dann Wiederholungen
+zwischen Ergebnis und Diskussion auflösen, erst zuletzt Sätze verdichten. Zahlen werden
+nicht gerundet oder weggelassen, um Platz zu schaffen; lieber entfällt ein ganzer Nebensatz.
+Kein Inhalt wird stillschweigend abgeschwächt, nur weil der Beleg dafür gestrichen wurde.
+
+**Abbildung mit gleicher Blickrichtung:** Zwei Rekonstruktionen derselben Szene stehen in
+unterschiedlichen, willkürlichen Koordinatensystemen. Für eine gemeinsame Ansicht wird die
+eine Wolke über eine Sim(3)-Anpassung auf die andere gelegt, geschätzt aus den
+Kamerazentren gleichnamiger Bilder. Danach zeigt derselbe Blickwinkel auch dieselbe Seite
+des Objekts.
+
+**Prüfung:** Das erzeugte PDF hat höchstens sechs Seiten. Die Seitenzahl wird gemessen,
+nicht geschätzt.
+
 ## Prüfkriterien
 
 | Kriterium | Prüfung |

@@ -18,12 +18,13 @@ https://colmap.github.io/format.html
 """
 
 import logging
+import re
 import shutil
 import struct
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -258,6 +259,7 @@ class ColmapRunner:
         self.args           = args
         self.colmap_bin     = colmap_bin
         self.keep_workspace = keep_workspace
+        self._opt_cache: Dict[str, Set[str]] = {}
 
         output_path       = Path(args.output)
         self._image_dir   = Path(args.image_dir).resolve()
@@ -319,6 +321,46 @@ class ColmapRunner:
         if not self.keep_workspace:
             self._clean_workspace()
 
+    # ── Option-name compatibility across COLMAP versions ─────────────────────
+
+    def _supported_options(self, command: str) -> Set[str]:
+        """Option names accepted by ``colmap <command>``, read from its help."""
+        if command not in self._opt_cache:
+            try:
+                proc = subprocess.run(
+                    [self.colmap_bin, command, "-h"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                help_text = (proc.stdout or "") + (proc.stderr or "")
+            except (OSError, subprocess.SubprocessError):
+                help_text = ""
+            self._opt_cache[command] = set(
+                re.findall(r"--([A-Za-z0-9_.]+)", help_text)
+            )
+        return self._opt_cache[command]
+
+    def _add_opt(self, cmd: list, command: str, value: str, *names: str) -> None:
+        """
+        Append the first option name this COLMAP build actually accepts.
+
+        COLMAP 4.x renamed ``SiftExtraction.use_gpu`` to
+        ``FeatureExtraction.use_gpu`` and ``SiftMatching.use_gpu`` to
+        ``FeatureMatching.use_gpu``; 3.x only knows the ``Sift*`` spellings.
+        Probing the sub-command's help keeps both working. If the help cannot be
+        read the first name is used, which reproduces the previous behaviour.
+        """
+        supported = self._supported_options(command)
+        if not supported:
+            cmd.extend([f"--{names[0]}", value])
+            return
+        for name in names:
+            if name in supported:
+                cmd.extend([f"--{name}", value])
+                return
+        logger.debug(
+            "[COLMAP] %s accepts none of %s — option skipped.", command, names
+        )
+
     # ── COLMAP sub-commands ───────────────────────────────────────────────────
 
     def _feature_extraction(self, db_path: Path) -> None:
@@ -328,9 +370,12 @@ class ColmapRunner:
             "--database_path",                     str(db_path),
             "--image_path",                        str(self._image_dir),
             "--ImageReader.single_camera",         "1",
-            "--SiftExtraction.max_num_features",   str(self.args.n_features),
-            "--SiftExtraction.use_gpu",            "1" if _has_gpu() else "0",
         ]
+        self._add_opt(cmd, "feature_extractor", str(self.args.n_features),
+                      "SiftExtraction.max_num_features",
+                      "FeatureExtraction.max_num_features")
+        self._add_opt(cmd, "feature_extractor", "1" if _has_gpu() else "0",
+                      "FeatureExtraction.use_gpu", "SiftExtraction.use_gpu")
         self._exec(cmd, "feature_extractor")
 
     def _matching(self, db_path: Path) -> None:
@@ -343,8 +388,8 @@ class ColmapRunner:
                 "--database_path",                str(db_path),
                 "--SequentialMatching.overlap",
                     str(getattr(self.args, "sequential_window", 5)),
-                "--SiftMatching.use_gpu", "1" if _has_gpu() else "0",
             ]
+            self._add_gpu_opt(cmd, "sequential_matcher")
         elif strategy == "vocab_tree":
             vocab_path = getattr(self.args, "colmap_vocab_tree", None)
             if vocab_path and Path(vocab_path).exists():
@@ -354,8 +399,8 @@ class ColmapRunner:
                     "--VocabTreeMatching.vocab_tree_path",     str(vocab_path),
                     "--VocabTreeMatching.num_images",
                         str(getattr(self.args, "vocab_top_k", 10)),
-                    "--SiftMatching.use_gpu", "1" if _has_gpu() else "0",
                 ]
+                self._add_gpu_opt(cmd, "vocab_tree_matcher")
             else:
                 if vocab_path:
                     logger.warning(
@@ -431,11 +476,17 @@ class ColmapRunner:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _exhaustive_cmd(self, db_path: Path) -> list:
-        return [
+        cmd = [
             self.colmap_bin, "exhaustive_matcher",
             "--database_path", str(db_path),
-            "--SiftMatching.use_gpu", "1" if _has_gpu() else "0",
         ]
+        self._add_gpu_opt(cmd, "exhaustive_matcher")
+        return cmd
+
+    def _add_gpu_opt(self, cmd: list, command: str) -> None:
+        """Append the matcher's GPU switch under whichever name it carries."""
+        self._add_opt(cmd, command, "1" if _has_gpu() else "0",
+                      "FeatureMatching.use_gpu", "SiftMatching.use_gpu")
 
     def _exec(self, cmd: list, stage: str) -> None:
         """Run a COLMAP sub-command, streaming output to the logger."""
