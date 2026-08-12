@@ -21,6 +21,9 @@ All GPU paths fall back to CPU FLANN automatically on OOM or import errors.
 """
 
 import logging
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from typing import Dict, List, Optional, Tuple
 
@@ -226,6 +229,34 @@ class FeatureMatcher:
     ratio_threshold : Lowe's ratio test threshold (0 < t < 1).
     cross_check     : Enforce mutual-best consistency.
     min_matches     : Drop pairs below this raw-match count.
+    workers         : Threads used for the pair loop.  0 picks a default from
+                      the core count; 1 keeps the loop serial.
+    seed            : Base seed for the per-pair RNG.  Negative disables
+                      per-pair seeding and restores history-dependent results.
+
+    Parallelism
+    ----------
+    Matching was measured at 91 % of a 67-image run and 4.9× slower than COLMAP
+    on the same CPU, the same pair count and the same descriptors — the gap is
+    that this loop ran serially while COLMAP used every core.  The work is
+    embarrassingly parallel across pairs, and the heavy part (FLANN `knnMatch`)
+    is OpenCV C++ that releases the GIL, so threads give real speedup without
+    the cost of pickling several hundred MB of descriptors to subprocesses.
+
+    Reproducibility
+    ---------------
+    FLANN's randomised KD-trees draw from OpenCV's RNG, which makes a pair's
+    result depend on how many FLANN calls preceded it: matching one pair twice
+    through the same matcher was measured returning 932 and then 915 matches.
+    Serially that is merely hidden — a fixed process seed plus a fixed pair
+    order reproduces the same sequence — but under threads the consumption
+    order is nondeterministic and results vary run to run.
+
+    Each pair is therefore seeded from its own index before matching, so a
+    pair's result depends only on which pair it is.  Matching then reproduces
+    exactly across runs *and* across worker counts, which is what makes the
+    parallel path verifiable against the serial one at all.  Results are also
+    assembled in serial pair order so downstream iteration order never changes.
     """
 
     def __init__(
@@ -233,11 +264,33 @@ class FeatureMatcher:
         ratio_threshold: float = 0.75,
         cross_check: bool = True,
         min_matches: int = 15,
+        workers: int = 0,
+        seed: int = 0,
     ) -> None:
         self.ratio_threshold = ratio_threshold
         self.cross_check     = cross_check
         self.min_matches     = min_matches
+        self.workers         = workers
+        self.seed            = seed
         self._matcher        = _make_flann()
+        # cv2.FlannBasedMatcher is not safe to share across threads; each
+        # worker gets its own through thread-local storage.
+        self._local          = threading.local()
+
+    def _thread_matcher(self) -> cv2.FlannBasedMatcher:
+        m = getattr(self._local, "matcher", None)
+        if m is None:
+            m = _make_flann()
+            self._local.matcher = m
+        return m
+
+    def _resolve_workers(self, n_pairs: int) -> int:
+        """Thread count to use: never more than there is work for."""
+        if self.workers and self.workers > 0:
+            n = self.workers
+        else:
+            n = os.cpu_count() or 1
+        return max(1, min(n, n_pairs))
 
     # ── public API ────────────────────────────────────────────────────────
 
@@ -262,24 +315,62 @@ class FeatureMatcher:
         all_pairs = list(combinations(indices, 2))
         n_pairs   = len(all_pairs)
         backend   = "GPU" if has_gpu() else "CPU FLANN"
+
+        # The GPU path already saturates the device and serialises on it, so
+        # threads would only add contention there.
+        n_workers = 1 if has_gpu() else self._resolve_workers(n_pairs)
         logger.info(
-            f"Exhaustive matching [{backend}]: {n_pairs} pairs  "
+            f"Exhaustive matching [{backend}, {n_workers} worker"
+            f"{'s' if n_workers != 1 else ''}]: {n_pairs} pairs  "
             f"(ratio={self.ratio_threshold}, cross_check={self.cross_check})…"
         )
 
+        results: List[Optional[np.ndarray]] = [None] * n_pairs
+        done = 0
+        step = max(1, n_pairs // 10)
+
+        def work(k: int) -> int:
+            i, j = all_pairs[k]
+            if self.seed >= 0:
+                # Per-pair seed: makes this pair's FLANN result independent of
+                # how many pairs ran before it, and of which thread runs it.
+                cv2.setRNGSeed(self.seed + k)
+            if has_gpu():
+                m = self.match_pair(
+                    features[i]["descriptors"], features[j]["descriptors"],
+                )
+            else:
+                m = _match_pair_cpu(
+                    self._thread_matcher(),
+                    features[i]["descriptors"], features[j]["descriptors"],
+                    self.ratio_threshold, self.cross_check,
+                )
+            results[k] = m
+            return k
+
+        if n_workers == 1:
+            for k in range(n_pairs):
+                work(k)
+                if (k + 1) % step == 0:
+                    logger.info(f"  … {k+1}/{n_pairs} pairs done")
+        else:
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                for _ in pool.map(work, range(n_pairs)):
+                    done += 1
+                    if done % step == 0:
+                        logger.info(f"  … {done}/{n_pairs} pairs done")
+
+        # Assemble in serial pair order so the result is order-identical to
+        # the single-threaded path.
         matches: MatchDict = {}
         for k, (i, j) in enumerate(all_pairs):
-            m = self.match_pair(
-                features[i]["descriptors"],
-                features[j]["descriptors"],
-            )
-            if len(m) >= self.min_matches:
+            m = results[k]
+            if m is not None and len(m) >= self.min_matches:
                 matches[(i, j)] = m
             else:
-                logger.debug(f"  Pair ({i},{j}): {len(m)} matches — skipped")
-
-            if (k + 1) % max(1, n_pairs // 10) == 0:
-                logger.info(f"  … {k+1}/{n_pairs} pairs done")
+                logger.debug(
+                    f"  Pair ({i},{j}): {0 if m is None else len(m)} matches — skipped"
+                )
 
         logger.info(
             f"Exhaustive matching done: {len(matches)}/{n_pairs} pairs "

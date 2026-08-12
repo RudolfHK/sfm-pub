@@ -56,7 +56,7 @@ Observation convention
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -267,18 +267,53 @@ class BundleAdjuster:
                           optimized parameter vector.  Set True to keep the
                           principal point fixed (e.g. for small datasets where
                           cx/cy optimization may not converge).
+    param_scaling       : Divide each parameter block by its natural unit before
+                          the solver sees it (see `_build_x_scale`).  On by
+                          default; without it the solver terminates on `xtol`
+                          long before the intrinsics have moved.
+
+    Solver conditioning
+    -------------------
+    The parameter vector mixes quantities of wildly different magnitude: a
+    focal length of order 10³ px sits next to rotation components and point
+    coordinates of order 1.  scipy's TRF measures both its trust-region radius
+    and its `xtol` step test against the *norm of the scaled vector*, so with
+    uniform scaling the focal dominates the norm and any step small enough to
+    be sane for the rotations is declared negligible overall.  Measured
+    consequence: BA terminated on `xtol` after 0.1 s with the focal 875 px
+    (47 %) wrong and a residual above 100 px — reported as convergence.
+
+    `_build_x_scale` removes this by giving every block its own unit, which is
+    equivalent to optimising dimensionless quantities.  It is deterministic and
+    free, unlike `x_scale="jac"`, which re-derives scales from the Jacobian at
+    every iteration and was measured at 280 s on a 23-camera problem.
+
+    Measured on the synthetic bench of `eval/ba_conditioning_check.py` (23
+    cameras, structure pinned to ground truth, focal started 47 % wrong):
+
+        setting                       focal error   rotation   time
+        uniform scaling, tol 1e-4       +47.01 %     1.050°     0.1 s
+        analytic scaling, tol 1e-4       +2.15 %     0.504°     2.2 s
+        uniform scaling, tol 1e-8       +44.43 %     3.530°   268.2 s
+        analytic scaling, tol 1e-8       +0.01 %     0.019°     9.3 s
+
+    The default tolerance is 1e-6 rather than 1e-8: on the real 20-image set
+    1e-6 reached 0.217° median rotation error in 2.5 s of reconstruction, while
+    1e-8 had not finished after 10 minutes.  Tighten it through `--ba-xtol` and
+    friends when accuracy matters more than time on a small problem.
     """
 
     def __init__(
         self,
         max_nfev: int = 200,
-        ftol: float = 1e-4,
-        gtol: float = 1e-4,
-        xtol: float = 1e-4,
+        ftol: float = 1e-6,
+        gtol: float = 1e-6,
+        xtol: float = 1e-6,
         loss: str = "huber",
         f_scale: float = 2.0,
         fix_principal_point: bool = False,
         separate_focal: bool = False,
+        param_scaling: bool = True,
     ) -> None:
         self.max_nfev            = max_nfev
         self.ftol                = ftol
@@ -288,6 +323,55 @@ class BundleAdjuster:
         self.f_scale             = f_scale
         self.fix_principal_point = fix_principal_point
         self.separate_focal      = separate_focal
+        self.param_scaling       = param_scaling
+
+    # ── solver conditioning ───────────────────────────────────────────────
+
+    @staticmethod
+    def _build_x_scale(
+        x0: np.ndarray,
+        n_intrinsics: int,
+        n_cameras: int,
+        intrinsic_units: Sequence[float],
+    ) -> np.ndarray:
+        """
+        Per-parameter characteristic scale, so the solver works on quantities
+        that are all O(1).
+
+        Blocks and their natural units:
+
+        - focal / principal point : `f_init` px      (pixel-valued, order 10³)
+        - distortion k1, k2       : 1                (already O(1), bounded ±2)
+        - rotation (Rodrigues)    : 1                (radians, O(1))
+        - translation             : scene scale      (arbitrary SfM units)
+        - 3-D points              : scene scale      (same units as above)
+
+        Scene scale is the RMS magnitude of the translation and point block
+        rather than a fixed constant, because monocular SfM fixes the overall
+        scale arbitrarily at the seed pair — a hard-coded unit would be wrong
+        by whatever factor that pair happened to produce.
+        """
+        scale = np.ones_like(x0)
+        scale[:n_intrinsics] = np.asarray(intrinsic_units, dtype=np.float64)
+
+        pose_start = n_intrinsics
+        pts_start  = pose_start + n_cameras * 6
+
+        pose_block = x0[pose_start:pts_start].reshape(-1, 6)
+        pts_block  = x0[pts_start:]
+
+        # Translations and points share one metric unit.
+        magnitudes = np.concatenate([pose_block[:, 3:].ravel(), pts_block])
+        scene = float(np.sqrt(np.mean(magnitudes ** 2))) if magnitudes.size else 1.0
+        if not np.isfinite(scene) or scene < 1e-9:
+            scene = 1.0
+
+        pose_scale = np.ones((pose_block.shape[0], 6), dtype=np.float64)
+        pose_scale[:, 3:] = scene          # rotations keep unit 1 (radians)
+        scale[pose_start:pts_start] = pose_scale.ravel()
+        scale[pts_start:] = scene
+
+        return scale
 
     def adjust(
         self,
@@ -366,6 +450,11 @@ class BundleAdjuster:
             cam_params_init[c_idx, 3:] = cameras[c_key]["t"].flatten()
 
         fix_pp = self.fix_principal_point
+        # Natural unit of each leading intrinsic parameter, in the same order
+        # they are packed into x0 below.  Consumed by _build_x_scale.
+        # Focal and principal point are pixel-valued; k1/k2 are already O(1).
+        _f_unit = max(abs(fx_init), 1.0)
+        intrinsic_units: list = []
         if refine_intrinsics:
             lb = None
             if sep_f:
@@ -379,6 +468,7 @@ class BundleAdjuster:
                         lb[_i] = 0.5 * _v; ub[_i] = 2.0 * _v
                     lb[2] = -2.0; ub[2] = 2.0
                     lb[3] = -2.0; ub[3] = 2.0
+                    intrinsic_units = [_f_unit, _f_unit, 1.0, 1.0]
                 else:
                     x0 = np.concatenate([
                         [fx_init, fy_init, k1_init, k2_init, cx_init, cy_init],
@@ -391,6 +481,7 @@ class BundleAdjuster:
                     _w = cx_init * 2.0; _h = cy_init * 2.0
                     lb[4] = cx_init - 0.1*_w; ub[4] = cx_init + 0.1*_w
                     lb[5] = cy_init - 0.1*_h; ub[5] = cy_init + 0.1*_h
+                    intrinsic_units = [_f_unit, _f_unit, 1.0, 1.0, _f_unit, _f_unit]
             else:
                 if fix_pp:
                     x0 = np.concatenate([
@@ -403,6 +494,7 @@ class BundleAdjuster:
                     lb[0] = 0.5 * fx_init;  ub[0] = 2.0 * fx_init
                     lb[1] = -2.0;           ub[1] = 2.0
                     lb[2] = -2.0;           ub[2] = 2.0
+                    intrinsic_units = [_f_unit, 1.0, 1.0]
                 else:
                     # Include cx, cy in optimized params (indices 3 and 4)
                     x0 = np.concatenate([
@@ -421,6 +513,7 @@ class BundleAdjuster:
                     _h = cy_init * 2.0
                     lb[3] = cx_init - 0.1 * _w;  ub[3] = cx_init + 0.1 * _w
                     lb[4] = cy_init - 0.1 * _h;  ub[4] = cy_init + 0.1 * _h
+                    intrinsic_units = [_f_unit, 1.0, 1.0, _f_unit, _f_unit]
             bounds = (lb, ub)
         else:
             x0 = np.concatenate([cam_params_init.ravel(), points_3d.ravel()])
@@ -458,6 +551,16 @@ class BundleAdjuster:
             refine_intrinsics, fix_pp, separate_focal=sep_f,
         )
 
+        # Condition the parameter vector (see class docstring).  Without this
+        # the focal-length block dominates ||x|| and the `xtol` test fires
+        # before the intrinsics have moved at all.
+        if self.param_scaling:
+            x_scale = self._build_x_scale(
+                x0, len(intrinsic_units), n_cameras, intrinsic_units,
+            )
+        else:
+            x_scale = 1.0
+
         try:
             result = least_squares(
                 fun,
@@ -467,6 +570,7 @@ class BundleAdjuster:
                 method="trf",
                 loss=self.loss,
                 f_scale=f_scale_used,
+                x_scale=x_scale,
                 max_nfev=self.max_nfev * len(x0),
                 ftol=self.ftol,
                 gtol=self.gtol,
@@ -480,8 +584,18 @@ class BundleAdjuster:
         rmse_final = float(np.sqrt(np.nanmean(result.fun ** 2)))
         logger.info(
             f"  BA final RMSE: {rmse_final:.3f} px  "
-            f"(cost={result.cost:.4f}, {result.message})"
+            f"(cost={result.cost:.4f}, nfev={result.nfev}, {result.message})"
         )
+        # A `xtol` stop while the residual is still large means the solver gave
+        # up on step size, not that it converged.  That failure was previously
+        # indistinguishable from success in the log; name it.
+        if result.status == 3 and rmse_final > 4.0:
+            logger.warning(
+                "[BA] Stopped on step-size tolerance (xtol) at %.2f px residual — "
+                "this is a stall, not convergence. Lower --ba-xtol or check "
+                "parameter conditioning.",
+                rmse_final,
+            )
 
         # Guard: reject if BA diverged
         _div_ratio = rmse_final / rmse_init if rmse_init > 1e-10 else 1.0

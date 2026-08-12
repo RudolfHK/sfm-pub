@@ -15,6 +15,7 @@ Usage
 
     # Example usage for specific dataset:
     python run_sfm.py --image_dir "C:/Users/baldo/Downloads/dataset_buddha-master/dataset_buddha-master/buddha_imgs" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense2.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
+    python run_sfm.py --image_dir "C:/Users/Rudolf/Downloads/dataset_buddha-master/dataset_buddha-master/imgs_only" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense2.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
 
 Run `python run_sfm.py --help` for all options.
 """
@@ -123,6 +124,18 @@ def build_parser() -> argparse.ArgumentParser:
             "'Note: vocab_tree requires a pre-built COLMAP vocabulary tree file when using the COLMAP backend (see --colmap-vocab-tree)."
             "'Recommended' settings:  "
             "Use 'exhaustive' for small datasets (<50 images) with no temporal ordering.  "
+        ),
+    )
+    p.add_argument(
+        "--match-workers",
+        type=int,
+        default=0,
+        help=(
+            "Threads for the exhaustive matching pair loop.  0 (default) uses "
+            "the CPU count; 1 forces the serial loop.  Matching was 91%% of a "
+            "67-image run and 4.9× slower than COLMAP on the same CPU purely "
+            "because this loop was serial.  Results are order-identical to the "
+            "serial path regardless of thread count."
         ),
     )
     p.add_argument(
@@ -294,6 +307,94 @@ def build_parser() -> argparse.ArgumentParser:
             "O(C³+P) scaling; falls back to scipy if pyceres is not installed."
         ),
     )
+    p.add_argument(
+        "--no-track-completion",
+        action="store_true",
+        help=(
+            "Disable track completion and merging after each bundle adjustment. "
+            "Completion extends a track into cameras that already observe it; "
+            "merging reconciles two 3-D points that a verified match proves "
+            "identical.  Without them mean track length was measured at 2.70 "
+            "against COLMAP's 4.69 on the same images, with 8%% exact duplicates."
+        ),
+    )
+    p.add_argument(
+        "--focal",
+        type=float,
+        default=None,
+        metavar="PX",
+        help=(
+            "Known focal length in pixels, overriding EXIF and the max(W, H) "
+            "fallback.  Supply this whenever the camera is calibrated: the "
+            "fallback guess was measured 47%% wrong on an uncalibrated dataset, "
+            "which is the single largest source of geometric error."
+        ),
+    )
+    p.add_argument(
+        "--intrinsics",
+        default=None,
+        metavar="fx,fy,cx,cy",
+        help=(
+            "Full known calibration as four comma-separated pixel values.  "
+            "Takes precedence over --focal, EXIF and the size-based fallback."
+        ),
+    )
+    p.add_argument(
+        "--focal-search",
+        action="store_true",
+        help=(
+            "Estimate the focal length before reconstruction by sweeping "
+            "candidates and keeping the one that yields the most accepted "
+            "two-view correspondences.  Use when the images carry no EXIF and "
+            "no calibration is known.  Ignored if --focal or --intrinsics is given."
+        ),
+    )
+    p.add_argument(
+        "--focal-search-pairs",
+        type=int,
+        default=12,
+        help="Number of strongest image pairs sampled per candidate by --focal-search.",
+    )
+    p.add_argument(
+        "--ba-ftol",
+        type=float,
+        default=1e-6,
+        help="BA cost-change convergence tolerance (scipy least_squares ftol).",
+    )
+    p.add_argument(
+        "--ba-xtol",
+        type=float,
+        default=1e-6,
+        help=(
+            "BA step-size convergence tolerance (scipy least_squares xtol).  "
+            "The former default of 1e-4 stopped the solver after ~0.1s with the "
+            "focal length still 47%% wrong, reported as convergence."
+        ),
+    )
+    p.add_argument(
+        "--ba-gtol",
+        type=float,
+        default=1e-6,
+        help="BA gradient convergence tolerance (scipy least_squares gtol).",
+    )
+    p.add_argument(
+        "--ba-max-nfev",
+        type=int,
+        default=200,
+        help=(
+            "BA function-evaluation budget, multiplied by the parameter count.  "
+            "Lower it to bound the runtime cost of the tighter tolerances."
+        ),
+    )
+    p.add_argument(
+        "--ba-no-param-scaling",
+        action="store_true",
+        help=(
+            "Disable analytic parameter scaling in bundle adjustment, restoring "
+            "the pre-fix behaviour where focal, translations and point "
+            "coordinates share one scale.  Diagnostic use only."
+        ),
+    )
     # MVS densification
     p.add_argument(
         "--dense",
@@ -326,6 +427,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=2,
         help="Minimum cameras with positive depth for a point to survive --mvs-fusion.",
     )
+    p.add_argument(
+        "--max-dense-points",
+        type=int,
+        default=500_000,
+        help=(
+            "Cap on the dense cloud size; points above it are randomly "
+            "subsampled.  When the cap binds, the output size is set by this "
+            "number rather than by the scene — a warning now says so."
+        ),
+    )
     # Export
     p.add_argument(
         "--no_filter",
@@ -337,6 +448,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Enable DEBUG-level logging.",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help=(
+            "Random seed for OpenCV, NumPy and the stdlib RNG.  OpenCV's RANSAC "
+            "variants (USAC_MAGSAC, solvePnPRansac) draw from a process-global "
+            "generator; without seeding it, identical invocations vary by up to "
+            "57%% in registered cameras.  Use --seed -1 to keep the previous "
+            "nondeterministic behaviour."
+        ),
+    )
+    p.add_argument(
+        "--export-cameras",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write the registered camera poses (R, t, K) and per-run statistics "
+            "to a JSON file.  Enables external evaluation against ground-truth "
+            "poses.  Ignored by the COLMAP backend."
+        ),
     )
 
     # ── Visualization (completely optional) ──────────────────────────────
@@ -666,20 +799,95 @@ def _validate_inputs(args) -> Optional[str]:
                 "--colmap-vocab-tree PATH (download from demuc.de/colmap/#download)."
             )
 
+    # 5 — Optional deep-learning backends: fail here with an actionable message
+    # rather than deep inside the pipeline with a raw ModuleNotFoundError, and
+    # before any expensive stage has been paid for.  Same contract as the
+    # COLMAP pre-flight above.
+    err = _check_optional_backends(args)
+    if err is not None:
+        return err
+
+    return None
+
+
+# Optional backend → (selecting flag, required importable modules, install hint).
+_OPTIONAL_BACKENDS = {
+    "superpoint": (
+        "--feature-backend superpoint",
+        ("torch", "kornia"),
+        "pip install torch kornia",
+    ),
+    "disk": (
+        "--feature-backend disk",
+        ("torch", "kornia"),
+        "pip install torch kornia",
+    ),
+    "loftr": (
+        "--match_strategy loftr",
+        ("torch", "kornia"),
+        "pip install torch kornia",
+    ),
+    "dinov2": (
+        "--retrieval dinov2",
+        ("torch",),
+        "pip install torch torchvision",
+    ),
+}
+
+
+def _check_optional_backends(args) -> Optional[str]:
+    """Return an actionable message when a selected optional backend cannot import."""
+    import importlib.util
+
+    selected = []
+    if getattr(args, "feature_backend", "sift") in ("superpoint", "disk"):
+        selected.append(args.feature_backend)
+    if getattr(args, "match_strategy", "") == "loftr":
+        selected.append("loftr")
+    if getattr(args, "retrieval", "none") == "dinov2":
+        selected.append("dinov2")
+
+    for name in selected:
+        flag, modules, hint = _OPTIONAL_BACKENDS[name]
+        missing = [
+            m for m in modules if importlib.util.find_spec(m) is None
+        ]
+        if missing:
+            return (
+                f"{flag} requires {', '.join(modules)}, but "
+                f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} "
+                f"not installed. Install with: {hint}"
+            )
     return None
 
 
 def _image_set_hash(image_paths: list) -> str:
     """
-    Compute a short hash over the sorted image filenames and their sizes.
-    Used to invalidate checkpoints when the image set changes.
+    Hash the image set to decide whether a checkpoint may be reused.
+
+    Digests file *content*, not just name and size.  Hashing name+size alone
+    was demonstrably unsafe: `eval/hash_collision_test.py` builds two entirely
+    different 4-image scenes with identical filenames and identical byte sizes
+    (equal-dimension uncompressed BMPs), and the resumed run reported a cache
+    hit and reconstructed scene B from scene A's features, with no warning.
+    Any workflow that edits images in place — re-exporting, colour-correcting,
+    undistorting — hit the same failure.
+
+    Content hashing costs one sequential read of the image set (a few hundred
+    ms for 67 PNGs) against a feature-extraction stage measured in tens of
+    seconds, so the check is paid for many times over the first time it
+    correctly invalidates.
     """
     h = hashlib.md5()
     for p in sorted(str(p) for p in image_paths):
         h.update(p.encode())
         try:
             h.update(str(os.path.getsize(p)).encode())
+            with open(p, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
         except OSError:
+            # Unreadable here is not fatal: extraction reports and skips it.
             pass
     return h.hexdigest()[:16]
 
@@ -737,6 +945,129 @@ def _load_checkpoint(ckpt_dir: Path, name: str, img_hash: str):
         return None
 
 
+def _export_cameras(
+    path: str,
+    cameras: dict,
+    K,
+    dist_coeffs,
+    features: dict,
+    points_3d,
+    observations: list,
+    stage_times: dict,
+    args,
+    focal_curve: Optional[list] = None,
+) -> None:
+    """
+    Dump registered camera poses and run statistics to JSON.
+
+    The schema is deliberately flat and dependency-free so that external
+    evaluation tools (see eval/) can compare the poses against ground truth
+    without importing the pipeline.
+
+    Poses use the OpenCV world-to-camera convention: x_cam = R @ x_world + t.
+    The camera centre in world coordinates is C = -R.T @ t.
+    """
+    import json
+
+    import numpy as np
+
+    from sfm.utils import reprojection_error
+
+    errs = [
+        reprojection_error(
+            points_3d[pt_idx],
+            np.array([x, y]),
+            cameras[img_idx].get("K", K),
+            cameras[img_idx]["R"],
+            cameras[img_idx]["t"],
+        )
+        for img_idx, pt_idx, x, y in observations
+        if img_idx in cameras and pt_idx < len(points_3d)
+    ]
+    errs = np.array([e for e in errs if np.isfinite(e)], dtype=np.float64)
+
+    track_lengths: dict = {}
+    for img_idx, pt_idx, _, _ in observations:
+        track_lengths[pt_idx] = track_lengths.get(pt_idx, 0) + 1
+
+    payload = {
+        "convention": "world_to_camera (x_cam = R @ x_world + t); C = -R.T @ t",
+        "n_images": len(features),
+        "n_cameras_registered": len(cameras),
+        "n_points": int(len(points_3d)),
+        "n_observations": len(observations),
+        "mean_track_length": (
+            float(np.mean(list(track_lengths.values()))) if track_lengths else 0.0
+        ),
+        "reprojection": {
+            "rmse_px": float(np.sqrt(np.mean(errs**2))) if errs.size else None,
+            "mean_px": float(np.mean(errs)) if errs.size else None,
+            "median_px": float(np.median(errs)) if errs.size else None,
+            "p95_px": float(np.percentile(errs, 95)) if errs.size else None,
+            "max_px": float(np.max(errs)) if errs.size else None,
+            "frac_above_threshold": (
+                float(np.mean(errs > args.max_reproj_error)) if errs.size else None
+            ),
+            "threshold_px": args.max_reproj_error,
+            "n_residuals": int(errs.size),
+        },
+        "focal_search": focal_curve,
+        "shared_K": np.asarray(K, dtype=float).tolist(),
+        "dist_coeffs": np.asarray(dist_coeffs, dtype=float).ravel().tolist(),
+        "stage_times_s": stage_times,
+        "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+        "cameras": [],
+    }
+
+    for img_idx in sorted(cameras):
+        cam = cameras[img_idx]
+        R = np.asarray(cam["R"], dtype=float)
+        t = np.asarray(cam["t"], dtype=float).reshape(3)
+        payload["cameras"].append(
+            {
+                "image_index": int(img_idx),
+                "image_name": Path(features[img_idx]["image_path"]).name,
+                "R": R.tolist(),
+                "t": t.tolist(),
+                "center": (-R.T @ t).tolist(),
+                "K": np.asarray(cam.get("K", K), dtype=float).tolist(),
+            }
+        )
+
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+    logger.info("       Camera poses exported → %s", path)
+
+
+def _seed_rngs(seed: int) -> None:
+    """
+    Seed every random source the pipeline consumes.
+
+    The NumPy generators used inside the pipeline are already constructed with
+    a fixed seed, but OpenCV keeps a *process-global* RNG that USAC_MAGSAC and
+    solvePnPRansac draw from, and it is seeded from system state.  Leaving it
+    unseeded is what makes byte-identical invocations register different
+    numbers of cameras.  Seeding it here is the only place that covers every
+    downstream call.
+
+    `seed < 0` restores the previous nondeterministic behaviour.
+    """
+    if seed < 0:
+        logger.info("Seeding disabled (--seed %d) — results will not be reproducible.", seed)
+        return
+
+    import random
+
+    import cv2
+    import numpy as np
+
+    cv2.setRNGSeed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    logger.info("RNG seed: %d (OpenCV, NumPy, random)", seed)
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -761,7 +1092,10 @@ def main(argv=None) -> int:
     logger.info("  Structure from Motion Pipeline  [backend: %s]", args.backend)
     logger.info("=" * 62)
 
+    _seed_rngs(args.seed)
+
     t_total = time.time()
+    stage_times: dict = {}
 
     # ── COLMAP backend — short-circuit the Python pipeline ────────────────
     if args.backend in ("colmap", "colmap-mvs"):
@@ -839,9 +1173,45 @@ def main(argv=None) -> int:
     ckpt_dir = _ckpt_dir(args)
     img_hash = _image_set_hash(image_paths)
 
-    sample = load_image(image_paths[0])
-    K = estimate_intrinsics(sample.shape, image_path=image_paths[0])
+    # Intrinsics come from the first *readable* image: a corrupt leading file
+    # must not decide the run before extraction has had a chance to skip it.
+    sample = None
+    sample_path = None
+    for _p in image_paths:
+        try:
+            sample = load_image(_p)
+            sample_path = _p
+            break
+        except Exception as exc:
+            logger.warning("Skipping unreadable image %s: %s", Path(_p).name, exc)
+    if sample is None:
+        logger.error("No readable images in %s", args.image_dir)
+        return 1
+
+    K = estimate_intrinsics(sample.shape, image_path=sample_path)
     dist_coeffs = np.zeros(4, dtype=np.float64)  # refined later by BA if enabled
+
+    # A supplied calibration always wins over EXIF and the size-based guess.
+    if args.intrinsics:
+        try:
+            fx, fy, cx, cy = (float(v) for v in args.intrinsics.split(","))
+        except ValueError:
+            logger.error(
+                "--intrinsics expects four comma-separated numbers "
+                "'fx,fy,cx,cy'; got %r", args.intrinsics,
+            )
+            return 1
+        K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
+        logger.info("Intrinsics supplied: fx=%.1f fy=%.1f cx=%.1f cy=%.1f", fx, fy, cx, cy)
+    elif args.focal is not None:
+        if args.focal <= 0:
+            logger.error("--focal must be positive; got %s", args.focal)
+            return 1
+        logger.info(
+            "Focal supplied: %.1f px (overriding estimate of %.1f px)",
+            args.focal, K[0, 0],
+        )
+        K[0, 0] = K[1, 1] = float(args.focal)
 
     if viz is not None:
         try:
@@ -879,9 +1249,11 @@ def main(argv=None) -> int:
                 sift_sigma=args.sift_sigma,
             )
         features = extractor.extract_all(image_paths)
+        stage_times["features"] = time.time() - t
         logger.info(f"       Done in {time.time()-t:.1f}s")
         _save_checkpoint(ckpt_dir, "features", features, img_hash)
     else:
+        stage_times["features"] = 0.0  # loaded from checkpoint
         logger.info("       Skipped (loaded from checkpoint)")
 
     total_kps = sum(len(f["keypoints"]) for f in features.values())
@@ -949,12 +1321,16 @@ def main(argv=None) -> int:
                 min_matches=args.min_matches,
             ).match_all(features)
         else:
-            all_matches = FeatureMatcher(**common_kw).match_all(features)
+            all_matches = FeatureMatcher(
+                workers=args.match_workers, seed=args.seed, **common_kw
+            ).match_all(features)
+        stage_times["matching"] = time.time() - t
         logger.info(
             f"       Done in {time.time()-t:.1f}s — {len(all_matches)} pairs retained"
         )
         _save_checkpoint(ckpt_dir, match_ckpt_key, all_matches, img_hash)
     else:
+        stage_times["matching"] = 0.0  # loaded from checkpoint
         logger.info(
             f"       Skipped (loaded from checkpoint — {len(all_matches)} pairs)"
         )
@@ -969,6 +1345,26 @@ def main(argv=None) -> int:
         logger.error("No pairs with sufficient matches — aborting.")
         return 1
 
+    # ── Focal-length search (before verification: E depends on K) ─────────
+    focal_curve = None
+    if args.focal_search and args.focal is None and not args.intrinsics:
+        from sfm.focal_search import search_focal
+
+        t = time.time()
+        best_focal, focal_curve = search_focal(
+            K, features, all_matches,
+            n_pairs=args.focal_search_pairs,
+            ransac_threshold=args.ransac_thr,
+            min_inliers=args.min_inliers,
+            max_reproj_error=args.max_reproj_error,
+        )
+        K[0, 0] = K[1, 1] = best_focal
+        stage_times["focal_search"] = time.time() - t
+    elif args.focal_search:
+        logger.info(
+            "Focal search skipped — an explicit calibration was supplied."
+        )
+
     # ─────────────────────────────────────────────────────────────────────
     # Stage 4 — Geometric verification
     # ─────────────────────────────────────────────────────────────────────
@@ -979,6 +1375,7 @@ def main(argv=None) -> int:
         min_inliers=args.min_inliers,
     )
     verified = verifier.verify_all(features, all_matches, K, dist_coeffs=dist_coeffs)
+    stage_times["verification"] = time.time() - t
     logger.info(f"       Done in {time.time()-t:.1f}s — {len(verified)} verified pairs")
 
     if viz is not None:
@@ -1130,6 +1527,14 @@ def main(argv=None) -> int:
         local_ba_window=getattr(args, "local_ba_window", 0),
         ba_separate_focal=getattr(args, "ba_separate_focal", False),
         pnp_backend=getattr(args, "pnp_backend", "cv2"),
+        track_completion=not args.no_track_completion,
+        ba_options={
+            "ftol": args.ba_ftol,
+            "xtol": args.ba_xtol,
+            "gtol": args.ba_gtol,
+            "max_nfev": args.ba_max_nfev,
+            "param_scaling": not args.ba_no_param_scaling,
+        },
     )
     try:
         cameras, points_3d, observations, kp_to_3d = sfm.reconstruct()
@@ -1139,6 +1544,8 @@ def main(argv=None) -> int:
 
         traceback.print_exc()
         return 1
+
+    stage_times["reconstruction"] = time.time() - t
 
     # Read back refined intrinsics from the SfM object
     K = sfm.K
@@ -1187,6 +1594,7 @@ def main(argv=None) -> int:
         logger.error(f"Failed to write PLY: {exc}")
         return 1
 
+    stage_times["export"] = time.time() - t
     logger.info(f"       Done in {time.time()-t:.1f}s")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1216,6 +1624,7 @@ def main(argv=None) -> int:
         densifier = MVSDensifier(
             mvs_fusion=getattr(args, "mvs_fusion", False),
             fusion_min_views=getattr(args, "mvs_fusion_min_views", 2),
+            max_dense_pts=args.max_dense_points,
         )
         dense_pts, dense_colors = densifier.densify(
             cameras=cameras,
@@ -1247,6 +1656,8 @@ def main(argv=None) -> int:
         else:
             logger.warning("       MVS produced no dense points.")
 
+        stage_times["dense"] = time.time() - t
+        stage_times["dense_points"] = int(len(dense_pts))
         logger.info(f"       Done in {time.time()-t:.1f}s")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1256,6 +1667,8 @@ def main(argv=None) -> int:
     # ─────────────────────────────────────────────────────────────────────
     if args.mesh:
         from sfm.mesh.pipeline import MeshPipeline
+
+        _t_mesh = time.time()
 
         # Prefer the denser cloud if available, otherwise use sparse output
         _mesh_input = _dense_out_path if _dense_out_path is not None else args.output
@@ -1290,6 +1703,27 @@ def main(argv=None) -> int:
             if args.verbose:
                 import traceback
                 traceback.print_exc()
+
+        stage_times["mesh"] = time.time() - _t_mesh
+
+    # ── Camera pose export (opt-in, for external evaluation) ──────────────
+    if args.export_cameras:
+        stage_times["total"] = time.time() - t_total
+        try:
+            _export_cameras(
+                args.export_cameras,
+                cameras,
+                K,
+                dist_coeffs,
+                features,
+                points_3d,
+                observations,
+                stage_times,
+                args,
+                focal_curve=focal_curve,
+            )
+        except Exception as exc:
+            logger.warning("Camera export failed: %s", exc)
 
     # ─────────────────────────────────────────────────────────────────────
     # Visualization — final outputs

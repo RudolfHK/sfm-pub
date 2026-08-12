@@ -209,6 +209,16 @@ class MVSDensifier:
             )
 
         if len(pts_merged) > self.max_dense_pts:
+            # Announce the cap.  Silently truncating made the reported point
+            # count a property of this constant rather than of the scene: two
+            # different dense runs both returned exactly 500 000 points with
+            # nothing in the log to say so.
+            logger.warning(
+                "Dense cloud truncated: %d points subsampled to the "
+                "--max-dense-points cap of %d. The reported point count is set "
+                "by this cap, not by the scene; raise it to keep more.",
+                len(pts_merged), self.max_dense_pts,
+            )
             rng = np.random.default_rng(0)
             sel = rng.choice(len(pts_merged), self.max_dense_pts, replace=False)
             pts_merged    = pts_merged[sel]

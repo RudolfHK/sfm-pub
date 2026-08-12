@@ -195,6 +195,8 @@ class IncrementalSfM:
         local_ba_window: int = 0,
         ba_separate_focal: bool = False,
         pnp_backend: str = "cv2",
+        ba_options: Optional[dict] = None,
+        track_completion: bool = True,
     ) -> None:
         self.features            = features
         self.verified_pairs      = verified_pairs
@@ -204,6 +206,7 @@ class IncrementalSfM:
         self.refine_intrinsics   = refine_intrinsics
         self.fix_principal_point = fix_principal_point
         self.merge_tracks        = merge_tracks
+        self.track_completion    = track_completion
         self.viz                 = visualizer
         self._ba_step            = 0
         self._local_ba_window    = local_ba_window
@@ -254,6 +257,7 @@ class IncrementalSfM:
             self._ba = BundleAdjuster(
                 fix_principal_point=self.fix_principal_point,
                 separate_focal=ba_separate_focal,
+                **(ba_options or {}),
             )
         self._cams_since_ba   = 0
         self._registration_order: List[int] = []   # for local BA window
@@ -891,6 +895,366 @@ class IncrementalSfM:
             for key, old in self.kp_to_3d.items()
             if old < n and keep[old]
         }
+        self._rebuild_derived_indices()
+
+    # ── track completion and merging ──────────────────────────────────────
+
+    def _kp_to_pt_arrays(self) -> Dict[int, np.ndarray]:
+        """
+        Dense (n_keypoints,) int array per image mapping keypoint → 3-D point,
+        −1 where unassigned.
+
+        Rebuilt from `kp_to_3d` on each call.  The dict is the source of truth;
+        this is a lookup form that lets the per-pair work below run as array
+        operations instead of millions of dict probes.
+        """
+        arrays: Dict[int, np.ndarray] = {
+            img_idx: np.full(len(feat["keypoints"]), -1, dtype=np.int64)
+            for img_idx, feat in self.features.items()
+        }
+        for (img_idx, kp_idx), pt_idx in self.kp_to_3d.items():
+            arr = arrays.get(img_idx)
+            if arr is not None and 0 <= kp_idx < len(arr):
+                arr[kp_idx] = pt_idx
+        return arrays
+
+    def _reproj_batch(
+        self, img_idx: int, pts_3d: np.ndarray, pts_2d: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Vectorised reprojection error and depth of `pts_3d` in one camera."""
+        cam = self.cameras[img_idx]
+        K_i = self._get_K(img_idx)
+        R = cam["R"]
+        t = cam["t"].reshape(3)
+        X_c = (R @ pts_3d.T).T + t
+        z = X_c[:, 2]
+        zs = np.where(np.abs(z) > 1e-9, z, 1e-9)
+        u = K_i[0, 0] * X_c[:, 0] / zs + K_i[0, 2]
+        v = K_i[1, 1] * X_c[:, 1] / zs + K_i[1, 2]
+        err = np.hypot(u - pts_2d[:, 0], v - pts_2d[:, 1])
+        return err, z
+
+    def _complete_and_merge_tracks(self) -> Tuple[int, int]:
+        """
+        Extend existing tracks into cameras that already see them, and merge
+        tracks that verified matches prove to be the same point.
+
+        Why this is needed
+        ------------------
+        Incremental triangulation only ever links the *newly registered* image
+        to its neighbours.  Two consequences were measured against COLMAP on
+        the same 67 images (`paper/paper_l.md` §6.7):
+
+        - mean track length 2.70 against COLMAP's 4.69, with more than 27 000
+          of ~40 000 points resting on exactly two views;
+        - 8.14 % of points exact duplicates — the same surface point
+          triangulated twice from different pairs and never reconciled.
+
+        Both come from the same gap.  When an inlier match connects a keypoint
+        that already has a 3-D point to one that does not, the observation is
+        simply dropped (completion); when it connects two keypoints carrying
+        *different* 3-D points, the older code took neither and left a
+        duplicate behind (merging).
+
+        Returns (n_observations_added, n_tracks_merged).
+        """
+        registered = set(self.cameras.keys())
+        if len(registered) < 2 or not self.points_3d:
+            return 0, 0
+
+        kp2pt = self._kp_to_pt_arrays()
+        pts_arr = np.asarray(self.points_3d, dtype=np.float64)
+
+        # ── Pass 1: completion ────────────────────────────────────────────
+        n_added = 0
+        for pair_key, data in self.verified_pairs.items():
+            i, j = pair_key
+            if i not in registered or j not in registered:
+                continue
+            inl = data["inlier_matches"]
+            if len(inl) == 0:
+                continue
+            ki = inl[:, 0].astype(np.int64)
+            kj = inl[:, 1].astype(np.int64)
+            a = kp2pt[i][ki]
+            b = kp2pt[j][kj]
+
+            # (source image, source point, destination image, destination kp)
+            for src, dst, src_pts, dst_kps in (
+                (i, j, a, kj), (j, i, b, ki),
+            ):
+                other = b if src == i else a
+                mask = (src_pts >= 0) & (other < 0)
+                if not mask.any():
+                    continue
+                cand_pt = src_pts[mask]
+                cand_kp = dst_kps[mask]
+
+                # An image may hold only one observation per 3-D point.
+                keep = np.array(
+                    [dst not in self._pt_observers[int(p)] for p in cand_pt],
+                    dtype=bool,
+                )
+                if not keep.any():
+                    continue
+                cand_pt = cand_pt[keep]
+                cand_kp = cand_kp[keep]
+
+                # Gate on undistorted coordinates, matching the acceptance
+                # test used at triangulation time.
+                err, depth = self._reproj_batch(
+                    dst, pts_arr[cand_pt], self._undist_kps[dst][cand_kp],
+                )
+                ok = (err <= self.max_reproj_err) & (depth > 0)
+                if not ok.any():
+                    continue
+
+                orig_kps = self.features[dst]["keypoints"]
+                for p, k in zip(cand_pt[ok], cand_kp[ok]):
+                    p = int(p); k = int(k)
+                    if kp2pt[dst][k] >= 0:      # claimed earlier in this pass
+                        continue
+                    self._link_kp(dst, k, p)
+                    self._add_obs(dst, p, orig_kps[k].astype(np.float64))
+                    kp2pt[dst][k] = p
+                    n_added += 1
+
+        # ── Pass 2: merging ───────────────────────────────────────────────
+        n_merged = self._merge_duplicate_tracks(kp2pt, registered)
+        return n_added, n_merged
+
+    def _merge_candidates(
+        self, kp2pt: Dict[int, np.ndarray], registered: Set[int]
+    ) -> Set[Tuple[int, int]]:
+        """
+        Point pairs that may be the same surface point, from two sources.
+
+        1. **Verified matches** — an inlier match whose two keypoints already
+           carry *different* 3-D points asserts those points are one.
+
+        2. **Spatial coincidence** — pairs closer together than a small
+           fraction of the cloud's own point spacing.  This second source is
+           what actually finds the duplicates measured on this dataset: SIFT
+           emits one keypoint per dominant orientation, so **17.5 % of
+           keypoints share a pixel position with another keypoint** in the same
+           image.  Each such sibling matches and triangulates independently
+           into its own 3-D point, and no match ever links the two — source 1
+           is blind to them.  Measured on the 20-image set, source 1 produced
+           24 candidates while ~11 % of points were duplicates.
+        """
+        cand: Set[Tuple[int, int]] = set()
+
+        for pair_key, data in self.verified_pairs.items():
+            i, j = pair_key
+            if i not in registered or j not in registered:
+                continue
+            inl = data["inlier_matches"]
+            if len(inl) == 0:
+                continue
+            a = kp2pt[i][inl[:, 0].astype(np.int64)]
+            b = kp2pt[j][inl[:, 1].astype(np.int64)]
+            both = (a >= 0) & (b >= 0) & (a != b)
+            for p, q in zip(a[both], b[both]):
+                p, q = int(p), int(q)
+                cand.add((p, q) if p < q else (q, p))
+
+        pts = np.asarray(self.points_3d, dtype=np.float64)
+        if len(pts) >= 2:
+            try:
+                from scipy.spatial import cKDTree
+            except ImportError:
+                return cand
+            tree = cKDTree(pts)
+            # Radius scaled to the cloud's own geometry: a ten-thousandth of
+            # the typical point spacing is far below real surface detail, so
+            # only genuine coincidences are proposed.  Every candidate still
+            # has to pass the geometric test below.
+            nn, _ = tree.query(pts, k=2)
+            spacing = float(np.median(nn[:, 1]))
+            radius = max(spacing * 1e-4, 1e-12)
+            for p, q in tree.query_pairs(radius):
+                cand.add((p, q) if p < q else (q, p))
+
+        return cand
+
+    def _merge_duplicate_tracks(
+        self, kp2pt: Dict[int, np.ndarray], registered: Set[int]
+    ) -> int:
+        """
+        Union tracks that are provably the same surface point.
+
+        A merge is accepted when both hold:
+
+        - **No conflicting observation.**  Where both tracks are seen in the
+          same image, the two image positions must agree to within
+          `max_reproj_err` — that is the co-located-keypoint case, and the
+          redundant observation is dropped.  Two *different* positions in one
+          image mean the tracks are genuinely distinct, and the merge is
+          refused.
+        - **Every observation still fits.**  All observations of both tracks
+          must reproject within `max_reproj_err` of the merged position, with
+          positive depth.
+
+        The second test is what stops nearby-but-distinct points being pulled
+        together; candidates that fail are left alone rather than forced.
+        """
+        cand = self._merge_candidates(kp2pt, registered)
+        if not cand:
+            return 0
+
+        # Observations grouped by point, for the geometric test.
+        obs_by_pt: Dict[int, List[Tuple[int, float, float]]] = defaultdict(list)
+        for img_idx, pt_idx, x, y in self.observations:
+            obs_by_pt[pt_idx].append((img_idx, x, y))
+
+        parent: Dict[int, int] = {}
+
+        def find(x: int) -> int:
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        # Members and merged position of each live root.
+        members: Dict[int, List[int]] = {}
+        position: Dict[int, np.ndarray] = {}
+
+        def group(root: int) -> List[int]:
+            return members.get(root, [root])
+
+        def centre(root: int) -> np.ndarray:
+            if root in position:
+                return position[root]
+            return np.asarray(self.points_3d[root], dtype=np.float64)
+
+        n_merged = 0
+        for p, q in sorted(cand):
+            rp, rq = find(p), find(q)
+            if rp == rq:
+                continue
+
+            grp_p, grp_q = group(rp), group(rq)
+            obs_p = [o for m in grp_p for o in obs_by_pt.get(m, [])]
+            obs_q = [o for m in grp_q for o in obs_by_pt.get(m, [])]
+            if not obs_p or not obs_q:
+                continue
+
+            # Shared images are allowed only when both tracks were detected at
+            # the same place — sibling SIFT keypoints of one feature.  Distinct
+            # positions in one image mean two distinct surface points.
+            shared_ok = True
+            pos_q: Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+            for img_idx, x, y in obs_q:
+                pos_q[img_idx].append((x, y))
+            for img_idx, x, y in obs_p:
+                for xq, yq in pos_q.get(img_idx, ()):
+                    if np.hypot(x - xq, y - yq) > self.max_reproj_err:
+                        shared_ok = False
+                        break
+                if not shared_ok:
+                    break
+            if not shared_ok:
+                continue
+
+            # Merged position: observation-weighted mean of the two centres.
+            wp, wq = len(obs_p), len(obs_q)
+            X = (centre(rp) * wp + centre(rq) * wq) / float(wp + wq)
+
+            merged_obs = obs_p + obs_q
+            by_img: Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+            for img_idx, x, y in merged_obs:
+                if img_idx in self.cameras:
+                    by_img[img_idx].append((x, y))
+            ok = True
+            for img_idx, pts in by_img.items():
+                arr = np.asarray(pts, dtype=np.float64)
+                err, depth = self._reproj_batch(
+                    img_idx, np.repeat(X[None, :], len(arr), axis=0), arr,
+                )
+                if not (np.all(err <= self.max_reproj_err) and np.all(depth > 0)):
+                    ok = False
+                    break
+            if not ok:
+                continue
+
+            # Accept: rq folds into rp.
+            parent[rq] = rp
+            members[rp] = grp_p + grp_q
+            members.pop(rq, None)
+            position[rp] = X
+            position.pop(rq, None)
+            n_merged += 1
+
+        if n_merged == 0:
+            return 0
+
+        self._apply_track_merge(parent, position)
+        return n_merged
+
+    def _apply_track_merge(
+        self, parent: Dict[int, int], position: Dict[int, np.ndarray]
+    ) -> None:
+        """Collapse merged tracks and renumber points, observations and links."""
+        n = len(self.points_3d)
+
+        def find(x: int) -> int:
+            while parent.get(x, x) != x:
+                x = parent[x]
+            return x
+
+        # Representative of each surviving track, in stable index order.
+        root_of = np.arange(n, dtype=np.int64)
+        for old in range(n):
+            root_of[old] = find(old)
+
+        keep_roots = sorted(set(int(r) for r in root_of))
+        new_index = {root: k for k, root in enumerate(keep_roots)}
+
+        new_points = []
+        for root in keep_roots:
+            new_points.append(
+                position.get(root, np.asarray(self.points_3d[root], dtype=np.float64))
+            )
+
+        remap = np.array([new_index[int(root_of[i])] for i in range(n)], dtype=np.int64)
+
+        self.points_3d = [np.asarray(p, dtype=np.float64) for p in new_points]
+        self.kp_to_3d = {
+            key: int(remap[old]) for key, old in self.kp_to_3d.items() if old < n
+        }
+
+        # Rebuild observations, keeping one per (image, point).
+        seen: Set[Tuple[int, int]] = set()
+        new_obs: List[Tuple] = []
+        for img_idx, pt_idx, x, y in self.observations:
+            if pt_idx >= n:
+                continue
+            new_pt = int(remap[pt_idx])
+            if (img_idx, new_pt) in seen:
+                continue
+            seen.add((img_idx, new_pt))
+            new_obs.append((img_idx, new_pt, x, y))
+        self.observations = new_obs
+        self._rebuild_derived_indices()
+
+    def _rebuild_derived_indices(self) -> None:
+        """
+        Recompute `_pt_observers` and `covisibility` from `self.observations`.
+
+        Both are maintained incrementally by `_add_obs`; any operation that
+        renumbers points has to restore them or later observation checks
+        consult stale indices.
+        """
+        self._pt_observers = defaultdict(set)
+        self.covisibility = defaultdict(set)
+        for img_idx, pt_idx, _x, _y in self.observations:
+            self._pt_observers[pt_idx].add(img_idx)
+        for pt_idx, imgs in self._pt_observers.items():
+            for a in imgs:
+                for b in imgs:
+                    if a != b:
+                        self.covisibility[a].add(b)
 
     # ── track merging (union-find) ────────────────────────────────────────
 
@@ -1035,6 +1399,18 @@ class IncrementalSfM:
     def _run_ba(self) -> None:
         if len(self.cameras) < 2 or len(self.points_3d) < 10:
             return
+
+        # Complete and merge tracks *before* the solve, so BA optimises the
+        # enriched observation set rather than seeing it only on the next call.
+        if self.track_completion:
+            n_added, n_merged = self._complete_and_merge_tracks()
+            if n_added or n_merged:
+                logger.info(
+                    "  Tracks: +%d observations, %d merges → %d points, "
+                    "mean length %.2f",
+                    n_added, n_merged, len(self.points_3d),
+                    len(self.observations) / max(len(self.points_3d), 1),
+                )
 
         pts_arr      = np.array(self.points_3d, dtype=np.float64)
         n_pts_before = len(pts_arr)

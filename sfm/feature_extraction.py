@@ -147,9 +147,21 @@ class FeatureExtractor:
         """
         features: Dict[int, dict] = {}
         n = len(image_paths)
-        for idx, path in enumerate(image_paths):
-            logger.info(f"  Extracting [{idx+1}/{n}]: {Path(path).name}")
-            img = load_image(path)
+        skipped: list = []
+        idx = 0
+        for pos, path in enumerate(image_paths):
+            logger.info(f"  Extracting [{pos+1}/{n}]: {Path(path).name}")
+            try:
+                img = load_image(path)
+            except Exception as exc:
+                # One unreadable file used to abort the whole run after
+                # extraction had already been paid for — on a 67-image job that
+                # cost ~19 minutes for a single bad file.  Skip it instead.
+                logger.warning(
+                    "    Skipping unreadable image %s: %s", Path(path).name, exc
+                )
+                skipped.append(Path(path).name)
+                continue
             kps, descs = self.extract(img)
             features[idx] = {
                 "keypoints": kps,
@@ -157,10 +169,18 @@ class FeatureExtractor:
                 "image_path": Path(path),
                 "image_shape": img.shape,
             }
+            idx += 1
             logger.debug(f"    → {len(kps)} keypoints")
 
+        if skipped:
+            logger.warning(
+                "Skipped %d unreadable image%s: %s",
+                len(skipped), "s" if len(skipped) != 1 else "", ", ".join(skipped),
+            )
         total = sum(len(f["keypoints"]) for f in features.values())
-        logger.info(f"Extraction complete — {total:,} keypoints across {n} images")
+        logger.info(
+            f"Extraction complete — {total:,} keypoints across {len(features)} images"
+        )
         return features
 
     # ── backends ─────────────────────────────────────────────────────────
