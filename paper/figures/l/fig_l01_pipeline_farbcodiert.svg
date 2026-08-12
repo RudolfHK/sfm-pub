@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 700" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#23355D"/>
+    </marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#7F7F7F"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="700" fill="#FFFFFF"/>
+
+  <!-- Legend -->
+  <g>
+    <rect x="24" y="18" width="18" height="14" rx="3" fill="#1f6f8b"/>
+    <text x="50" y="30" font-size="13" fill="#333333">Aufruf einer Bibliothek (OpenCV, SciPy, Open3D)</text>
+    <rect x="404" y="18" width="18" height="14" rx="3" fill="#e76f51"/>
+    <text x="430" y="30" font-size="13" fill="#333333">eigener Python-Code</text>
+    <rect x="622" y="18" width="18" height="14" rx="3" fill="#F2F2F2" stroke="#7F7F7F" stroke-dasharray="4,2"/>
+    <text x="648" y="30" font-size="13" fill="#333333">optionale Stufe</text>
+    <text x="836" y="30" font-size="13" fill="#666666" font-style="italic">Zahlen: Referenzlauf n67_base, 67 Bilder</text>
+  </g>
+  <line x1="24" y1="44" x2="1156" y2="44" stroke="#DDDDDD" stroke-width="1"/>
+
+  <!-- Stage rows: y positions -->
+  <!-- Row template: label box | library column | own-code column -->
+
+  <!-- 1 Bilder und Intrinsik -->
+  <g>
+    <rect x="24" y="60" width="196" height="66" rx="7" fill="#EAF0F9" stroke="#23355D" stroke-width="1.4"/>
+    <text x="122" y="84" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#23355D">1  Bilder, Intrinsik</text>
+    <text x="122" y="104" text-anchor="middle" font-size="11.5" fill="#444444">67 Bilder, 2736 x 1540</text>
+    <text x="122" y="119" text-anchor="middle" font-size="11.5" fill="#444444">f = max(W, H) = 2736 px</text>
+  </g>
+  <rect x="250" y="60" width="330" height="66" rx="7" fill="#1f6f8b"/>
+  <text x="415" y="84" text-anchor="middle" font-size="12.5" fill="#FFFFFF">PIL exif_transpose, cv2.imread</text>
+  <text x="415" y="104" text-anchor="middle" font-size="11.5" fill="#CFE3EC">Bild laden, EXIF-Drehung anwenden</text>
+  <rect x="610" y="60" width="546" height="66" rx="7" fill="#e76f51"/>
+  <text x="883" y="84" text-anchor="middle" font-size="12.5" fill="#FFFFFF">estimate_intrinsics: EXIF lesen, sonst Heuristik f = max(W, H)</text>
+  <text x="883" y="104" text-anchor="middle" font-size="11.5" fill="#FBE0D8">Hauptpforte des Brennweitenfehlers von +47 % (Abschnitt 6.4)</text>
+
+  <!-- 2 Merkmale -->
+  <g>
+    <rect x="24" y="140" width="196" height="66" rx="7" fill="#EAF0F9" stroke="#23355D" stroke-width="1.4"/>
+    <text x="122" y="164" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#23355D">2  Merkmale</text>
+    <text x="122" y="184" text-anchor="middle" font-size="11.5" fill="#444444">468.252 Keypoints</text>
+    <text x="122" y="199" text-anchor="middle" font-size="11.5" fill="#444444">41,8 s</text>
+  </g>
+  <rect x="250" y="140" width="330" height="66" rx="7" fill="#1f6f8b"/>
+  <text x="415" y="164" text-anchor="middle" font-size="12.5" fill="#FFFFFF">cv2.SIFT_create.detectAndCompute</text>
+  <text x="415" y="184" text-anchor="middle" font-size="11.5" fill="#CFE3EC">Detektion und 128-D-Deskriptor</text>
+  <rect x="610" y="140" width="546" height="66" rx="7" fill="#e76f51"/>
+  <text x="883" y="164" text-anchor="middle" font-size="12.5" fill="#FFFFFF">Backend-Auswahl, Graustufen-Konversion, Zwischenspeicherung</text>
+  <text x="883" y="184" text-anchor="middle" font-size="11.5" fill="#FBE0D8">Cache-Schlüssel aus Dateiname und Größe, nicht aus dem Inhalt</text>
+
+  <!-- 3 Matching -->
+  <g>
+    <rect x="24" y="220" width="196" height="66" rx="7" fill="#EAF0F9" stroke="#23355D" stroke-width="1.4"/>
+    <text x="122" y="244" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#23355D">3  Matching</text>
+    <text x="122" y="264" text-anchor="middle" font-size="11.5" fill="#444444">2.211 Paare, 820 bleiben</text>
+    <text x="122" y="279" text-anchor="middle" font-size="11.5" fill="#444444">1.036,6 s, 91 % der Laufzeit</text>
+  </g>
+  <rect x="250" y="220" width="330" height="66" rx="7" fill="#1f6f8b"/>
+  <text x="415" y="244" text-anchor="middle" font-size="12.5" fill="#FFFFFF">cv2.FlannBasedMatcher.knnMatch (k = 2)</text>
+  <text x="415" y="264" text-anchor="middle" font-size="11.5" fill="#CFE3EC">cv2.kmeans für das visuelle Vokabular</text>
+  <rect x="610" y="220" width="546" height="66" rx="7" fill="#e76f51"/>
+  <text x="883" y="244" text-anchor="middle" font-size="12.5" fill="#FFFFFF">Ratio-Test, Cross-Check, Wahl der Kandidatenpaare</text>
+  <text x="883" y="264" text-anchor="middle" font-size="11.5" fill="#FBE0D8">erschöpfend, sequenziell, Vokabularbaum mit TF-IDF; O(N&#178;) Paare</text>
+
+  <!-- 4 Verifikation -->
+  <g>
+    <rect x="24" y="300" width="196" height="66" rx="7" fill="#EAF0F9" stroke="#23355D" stroke-width="1.4"/>
+    <text x="122" y="324" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#23355D">4  Verifikation</text>
+    <text x="122" y="344" text-anchor="middle" font-size="11.5" fill="#444444">643 Paare, 1 Komponente</text>
+    <text x="122" y="359" text-anchor="middle" font-size="11.5" fill="#444444">8,7 s</text>
+  </g>
+  <rect x="250" y="300" width="330" height="66" rx="7" fill="#1f6f8b"/>
+  <text x="415" y="324" text-anchor="middle" font-size="12.5" fill="#FFFFFF">findFundamentalMat, findEssentialMat,</text>
+  <text x="415" y="344" text-anchor="middle" font-size="12.5" fill="#FFFFFF">findHomography, recoverPose (USAC_MAGSAC)</text>
+  <rect x="610" y="300" width="546" height="66" rx="7" fill="#e76f51"/>
+  <text x="883" y="324" text-anchor="middle" font-size="12.5" fill="#FFFFFF">Hartley-Normierung, H/F-Konkurrenz nach Torr, Entartungsprüfung</text>
+  <text x="883" y="344" text-anchor="middle" font-size="11.5" fill="#FBE0D8">Inlier-Buchführung, Zusammenhangskomponenten per Union-Find</text>
+
+  <!-- 5 Rekonstruktion -->
+  <g>
+    <rect x="24" y="380" width="196" height="66" rx="7" fill="#EAF0F9" stroke="#23355D" stroke-width="1.4"/>
+    <text x="122" y="404" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#23355D">5  Rekonstruktion</text>
+    <text x="122" y="424" text-anchor="middle" font-size="11.5" fill="#444444">67 Kameras, 45.176 Punkte</text>
+    <text x="122" y="439" text-anchor="middle" font-size="11.5" fill="#444444">38,2 s zusammen mit BA</text>
+  </g>
+  <rect x="250" y="380" width="330" height="66" rx="7" fill="#1f6f8b"/>
+  <text x="415" y="404" text-anchor="middle" font-size="12.5" fill="#FFFFFF">cv2.triangulatePoints (DLT),</text>
+  <text x="415" y="424" text-anchor="middle" font-size="12.5" fill="#FFFFFF">solvePnPRansac, solvePnPRefineLM, Rodrigues</text>
+  <rect x="610" y="380" width="546" height="66" rx="7" fill="#e76f51"/>
+  <text x="883" y="404" text-anchor="middle" font-size="12.5" fill="#FFFFFF">Startpaarwahl, Registrierungsreihenfolge, Track-Verwaltung,</text>
+  <text x="883" y="424" text-anchor="middle" font-size="11.5" fill="#FBE0D8">Annahmekriterien, Ausreißerentfernung, Retriangulation nach BA</text>
+
+  <!-- 6 Bundle Adjustment -->
+  <g>
+    <rect x="24" y="460" width="196" height="66" rx="7" fill="#EAF0F9" stroke="#23355D" stroke-width="1.4"/>
+    <text x="122" y="484" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#23355D">6  Bundle Adjustment</text>
+    <text x="122" y="504" text-anchor="middle" font-size="11.5" fill="#444444">14 Runden, alle 5 Kameras</text>
+    <text x="122" y="519" text-anchor="middle" font-size="11.5" fill="#444444">RMSE 4,91 auf 9,19 px</text>
+  </g>
+  <rect x="250" y="460" width="330" height="66" rx="7" fill="#1f6f8b"/>
+  <text x="415" y="484" text-anchor="middle" font-size="12.5" fill="#FFFFFF">scipy.optimize.least_squares (TRF),</text>
+  <text x="415" y="504" text-anchor="middle" font-size="12.5" fill="#FFFFFF">scipy.sparse.csr_matrix</text>
+  <rect x="610" y="460" width="546" height="66" rx="7" fill="#e76f51"/>
+  <text x="883" y="484" text-anchor="middle" font-size="12.5" fill="#FFFFFF">Parametrisierung, Residuum mit Brown-Conrady, Jacobi-Struktur,</text>
+  <text x="883" y="504" text-anchor="middle" font-size="11.5" fill="#FBE0D8">adaptive Huber-Skala aus dem MAD, Divergenzschutz, lokales Fenster</text>
+
+  <!-- 7 Ausgabe -->
+  <g>
+    <rect x="24" y="540" width="196" height="66" rx="7" fill="#EAF0F9" stroke="#23355D" stroke-width="1.4"/>
+    <text x="122" y="564" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#23355D">7  Ausgabe, Diagnose</text>
+    <text x="122" y="584" text-anchor="middle" font-size="11.5" fill="#444444">39.721 Punkte, 8,0 s</text>
+    <text x="122" y="599" text-anchor="middle" font-size="11.5" fill="#444444">19 Typen von Diagnosebildern</text>
+  </g>
+  <rect x="250" y="540" width="330" height="66" rx="7" fill="#1f6f8b"/>
+  <text x="415" y="564" text-anchor="middle" font-size="12.5" fill="#FFFFFF">matplotlib (Agg)</text>
+  <text x="415" y="584" text-anchor="middle" font-size="11.5" fill="#CFE3EC">Diagnosebilder ohne Bildschirm</text>
+  <rect x="610" y="540" width="546" height="66" rx="7" fill="#e76f51"/>
+  <text x="883" y="564" text-anchor="middle" font-size="12.5" fill="#FFFFFF">binärer PLY-Writer, Farbübertragung, Ausreißerfilter, Kameraexport</text>
+  <text x="883" y="584" text-anchor="middle" font-size="11.5" fill="#FBE0D8">Filter bei 4 px entfernt 2.781 Punkte und senkt den RMSE auf 2,08 px</text>
+
+  <!-- optional row -->
+  <g>
+    <rect x="250" y="620" width="330" height="52" rx="7" fill="#F2F2F2" stroke="#7F7F7F" stroke-width="1.3" stroke-dasharray="5,3"/>
+    <text x="415" y="641" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#595959">Dichte Rekonstruktion (optional)</text>
+    <text x="415" y="659" text-anchor="middle" font-size="11.5" fill="#7F7F7F">cv2.StereoSGBM, stereoRectify | Paarwahl, Punktbudget</text>
+  </g>
+  <g>
+    <rect x="610" y="620" width="546" height="52" rx="7" fill="#F2F2F2" stroke="#7F7F7F" stroke-width="1.3" stroke-dasharray="5,3"/>
+    <text x="883" y="641" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#595959">Mesh (optional)</text>
+    <text x="883" y="659" text-anchor="middle" font-size="11.5" fill="#7F7F7F">Open3D: Normalen, Screened Poisson | Vorbereitung, Reinigung, Farbe, Export</text>
+  </g>
+
+  <!-- vertical flow arrows on the left label column -->
+  <line x1="122" y1="126" x2="122" y2="138" stroke="#23355D" stroke-width="1.8" marker-end="url(#a)"/>
+  <line x1="122" y1="206" x2="122" y2="218" stroke="#23355D" stroke-width="1.8" marker-end="url(#a)"/>
+  <line x1="122" y1="286" x2="122" y2="298" stroke="#23355D" stroke-width="1.8" marker-end="url(#a)"/>
+  <line x1="122" y1="366" x2="122" y2="378" stroke="#23355D" stroke-width="1.8" marker-end="url(#a)"/>
+  <line x1="122" y1="446" x2="122" y2="458" stroke="#23355D" stroke-width="1.8" marker-end="url(#a)"/>
+  <line x1="122" y1="526" x2="122" y2="538" stroke="#23355D" stroke-width="1.8" marker-end="url(#a)"/>
+  <line x1="122" y1="606" x2="122" y2="640" stroke="#7F7F7F" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="122" y1="646" x2="246" y2="646" stroke="#7F7F7F" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ag)"/>
+
+</svg>
