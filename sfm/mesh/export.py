@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 _SUPPORTED_FORMATS = frozenset({".obj", ".ply", ".glb", ".stl"})
 
 
-def export_mesh(mesh, output_path: "str | Path", verbose: bool = True) -> None:
+def export_mesh(mesh, output_path: "str | Path", verbose: bool = True) -> dict:
     """
     Write the mesh to disk in the format determined by the output path extension.
 
@@ -25,6 +25,10 @@ def export_mesh(mesh, output_path: "str | Path", verbose: bool = True) -> None:
     mesh        : open3d.geometry.TriangleMesh
     output_path : Destination file path; extension determines format.
     verbose     : Log detailed mesh statistics after writing.
+
+    Returns
+    -------
+    Dict with the resolved path, format and file size.
 
     Raises
     ------
@@ -42,6 +46,9 @@ def export_mesh(mesh, output_path: "str | Path", verbose: bool = True) -> None:
             f"Unsupported mesh format {suffix!r}. "
             f"Supported: {', '.join(sorted(_SUPPORTED_FORMATS))}"
         )
+
+    if not mesh.has_vertex_normals():
+        mesh.compute_vertex_normals()
 
     if suffix == ".obj":
         success = o3d.io.write_triangle_mesh(
@@ -73,27 +80,31 @@ def export_mesh(mesh, output_path: "str | Path", verbose: bool = True) -> None:
     if not success:
         raise OSError(f"open3d failed to write mesh to {output_path}")
 
-    if verbose and output_path.exists():
-        size_bytes = output_path.stat().st_size
-        size_mb = size_bytes / (1024 * 1024)
-        n_faces = len(mesh.triangles)
-        n_verts = len(mesh.vertices)
+    size_bytes = output_path.stat().st_size if output_path.exists() else 0
+    size_mb = size_bytes / (1024 * 1024)
 
+    if verbose and output_path.exists():
         logger.info(
             "[MESH EXPORT] Mesh saved: %s\n"
             "  Faces:       %d\n"
             "  Vertices:    %d\n"
             "  Has normals: %s\n"
             "  Has colors:  %s\n"
-            "  Watertight:  %s\n"
-            "  File size:   %.1f MB\n"
+            "  File size:   %.1f MB (%s)\n"
             "\n"
             "  View with: MeshLab, Blender, CloudCompare, or open3d viewer",
             output_path,
-            n_faces,
-            n_verts,
+            len(mesh.triangles),
+            len(mesh.vertices),
             "YES" if mesh.has_vertex_normals() else "NO",
             "YES" if mesh.has_vertex_colors() else "NO",
-            "YES" if mesh.is_watertight() else "NO",
             size_mb,
+            "ASCII — use .ply for a ~5x smaller binary file" if suffix == ".obj"
+            else "binary",
         )
+
+    return {
+        "path": str(output_path),
+        "format": suffix,
+        "size_bytes": int(size_bytes),
+    }

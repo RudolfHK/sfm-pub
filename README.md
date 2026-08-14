@@ -62,6 +62,9 @@ sfm --image_dir ./photos --output model.ply --backend colmap
 sfm --image_dir ./photos --output model.ply \
     --dense --mesh --mesh-method poisson --visualize
 
+# Mesh an existing point cloud without re-running SfM
+python -m sfm.mesh model_dense.ply -o model_mesh.ply --quality high
+
 # Large dataset (sequential matching + checkpointing)
 sfm --image_dir ./photos --output model.ply \
     --match_strategy sequential --checkpoint-dir ./ckpt --resume

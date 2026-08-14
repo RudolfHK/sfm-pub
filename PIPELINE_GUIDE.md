@@ -372,13 +372,20 @@ The `--colmap-vocab-tree` argument is required when `--match_strategy vocab_tree
 
 All mesh arguments are ignored unless `--mesh` is set. Requires `pip install open3d`.
 
+The mesh stage never replaces the point cloud: the sparse PLY and (with `--dense`)
+the dense PLY are already written before it runs, and it additionally saves the
+*prepared* cloud — filtered, downsampled and carrying the oriented normals that
+surface reconstruction actually consumed — as `<stem>_prepared_cloud.ply`.
+
 | Argument | Default | Description |
 |---|---|---|
 | `--mesh` | off | Enable mesh reconstruction |
 | `--mesh-output PATH` | `<stem>_mesh.obj` | Output mesh path (.obj .ply .glb .stl) |
 | `--mesh-method {poisson,bpa,alpha}` | `poisson` | Surface reconstruction algorithm |
 | `--mesh-quality {low,medium,high,ultra}` | `medium` | Quality preset |
-| `--mesh-depth N` | from preset | Poisson octree depth override (8–12) |
+| `--mesh-depth N` | auto | Poisson octree depth override; disables auto-selection |
+| `--mesh-trim F` | from preset | Phantom-surface trim distance, in point spacings |
+| `--mesh-target-points N` | from preset | Downsample target before meshing (0 = keep all) |
 | `--mesh-no-clean` | off | Skip mesh cleaning |
 | `--mesh-smooth` | off | Apply Taubin smoothing after cleaning |
 | `--mesh-smooth-iterations N` | 5 | Number of Taubin smoothing iterations |
@@ -386,22 +393,87 @@ All mesh arguments are ignored unless `--mesh` is set. Requires `pip install ope
 | `--mesh-decimate` | off | Reduce polygon count via quadric decimation |
 | `--mesh-decimate-target N` | 100000 | Target face count after decimation |
 | `--mesh-no-fill-holes` | off | Disable hole filling (enabled by default) |
-| `--mesh-keep-pointcloud` | off | Save cleaned point cloud alongside the mesh |
+| `--mesh-hole-size D` | from preset | Largest hole to close, in scene units |
+| `--mesh-keep-largest` | off | Keep only the largest connected component |
+| `--mesh-self-intersections` | off | Detect/remove self-intersecting triangles (slow) |
+| `--mesh-no-keep-pointcloud` | off | Do not save the prepared cloud (saved by default) |
+| `--mesh-no-validate` | off | Skip the quality report (produced by default) |
 | `--mesh-preview` | off | Open interactive viewer after mesh generation |
 
+**Standalone CLI.** Meshing an existing PLY does not require re-running SfM:
+
+```bash
+python -m sfm.mesh dense.ply -o mesh.ply --quality high     --cameras poses.json          # from run_sfm.py --export-cameras
+```
+
+This is the fast way to tune meshing parameters — seconds per iteration instead
+of a full reconstruction. Exit code 2 signals a FAIL verdict, so parameter sweeps
+can be scripted.
+
+**Point spacing is the unit.** Every radius, trim distance, hole size and quality
+threshold is a multiple of the cloud's median nearest-neighbour distance, not an
+absolute value or a fraction of the bounding box. SfM output has no absolute
+scale, so this is what makes one preset behave the same way on every dataset.
+
 **Method guide:**
-- `poisson`: Screened Poisson — best for smooth, closed objects. Requires watertight or near-watertight input.
-- `bpa`: Ball-Pivoting — better for thin structures and open surfaces.
+- `poisson`: Screened Poisson — best for smooth, closed objects. Needs oriented normals; always produces a closed surface, so its extrapolated "phantom" geometry is trimmed afterwards.
+- `bpa`: Ball-Pivoting — better for thin structures and open surfaces. Interpolates the points rather than approximating them, and leaves genuine holes as holes.
 - `alpha`: Alpha shapes — fast and predictable for convex or simple geometry.
 
 **Quality preset parameters:**
 
-| Preset | Poisson depth | Target points | SOR std ratio |
+| Preset | Poisson depth | Target cell (× spacing) | Target points | Trim (× spacing) |
+|---|---|---|---|---|
+| `low` | 8 (max 10) | 2.5 | 50,000 | 4.0 |
+| `medium` | 9 (max 11) | 1.5 | 200,000 | 3.0 |
+| `high` | 10 (max 12) | 1.0 | 500,000 | 2.5 |
+| `ultra` | 11 (max 13) | 0.8 | none | 2.0 |
+
+Poisson's resolution is `bbox_diagonal / 2^depth`, so a fixed depth means
+different detail on different clouds. The preset depth is a *floor*: it is raised
+automatically, up to the listed cap, until the finest octree cell is about the
+listed multiple of the point spacing. `--mesh-depth` disables this.
+
+**Quality report.** Unless `--mesh-no-validate` is passed, every run measures the
+mesh and writes `<stem>_quality.json` beside it:
+
+- **accuracy** (mesh → cloud): the mesh is sampled uniformly by area and each
+  sample's distance to the nearest cloud point is measured. Note the metric has a
+  floor of ≈ 2.1 × spacing at p95 even for a geometrically perfect mesh, because
+  it compares two independent samples of the same surface.
+- **completeness** (cloud → mesh): exact point-to-surface distances via a
+  raycasting BVH, plus the fraction of cloud points within 3 × spacing.
+- **topology**: manifoldness, watertightness, orientability, boundary and
+  non-manifold edge counts, components, Euler characteristic, genus.
+- **geometry**: area, volume when watertight, edge lengths, triangle aspect
+  ratios, degenerate faces.
+
+Each gets a PASS / WARN / FAIL verdict. Accuracy and completeness trade off
+against each other — a looser trim keeps more surface and covers more of the
+cloud but sits further from the data — so the presets sweep that curve:
+
+| Preset | Faces | Accuracy p95 | Coverage @ 3× |
 |---|---|---|---|
-| `low` | 8 | 50,000 | 3.0 |
-| `medium` | 9 | 200,000 | 2.0 |
-| `high` | 10 | 500,000 | 1.5 |
-| `ultra` | 11 | none | 1.2 |
+| `low` | 147 k | 7.23 × spacing | 95.1 % |
+| `medium` | 186 k | 5.46 × spacing | 91.4 % |
+| `high` | 210 k | 4.57 × spacing | 88.6 % |
+| `ultra` | 196 k | 3.50 × spacing | 86.6 % |
+
+*(measured on `buddha_python_dense.ply`, 39 003 points)*
+
+A `FAIL` verdict does not mean the stage crashed — the mesh is still written. It
+means a measured property fell outside the gate, and the log says which one.
+
+**Diagnostics worth reading.** Two warnings indicate a problem in the *cloud*
+rather than in the meshing:
+
+- *"Extent filter: dropped N far-off points… bounding box shrinks Nx"* — the
+  cloud contained stray points far from the object. Because Poisson resolution is
+  bounded by the bounding-box diagonal, these cost detail everywhere, so they are
+  removed.
+- *"Poisson is resolution-starved"* — even after that, the bounding box is huge
+  relative to the point spacing. This almost always means the reconstruction
+  diverged; inspect the cloud before trusting the mesh.
 
 ---
 
@@ -536,7 +608,11 @@ The pipeline will load feature and match checkpoints for the current image set a
 | `output.ply` | always | Sparse colored point cloud (binary little-endian PLY) |
 | `output_dense.ply` | with `--dense` | Dense point cloud from StereoSGBM MVS |
 | `output_mesh.obj` | with `--mesh` | Mesh (format determined by extension) |
+| `output_mesh_prepared_cloud.ply` | with `--mesh` | The filtered, normal-carrying cloud the mesh was built from |
+| `output_mesh_quality.json` | with `--mesh` | Measured accuracy, completeness, topology and verdicts |
 | `sfm_visualization/` | with `--visualize` | All visualization figures and GIFs |
+
+Meshing is strictly additive — it never modifies or replaces the point clouds.
 
 ### Reading a PLY File
 

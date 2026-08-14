@@ -15,7 +15,7 @@ Usage
 
     # Example usage for specific dataset:
     python run_sfm.py --image_dir "C:/Users/baldo/Downloads/dataset_buddha-master/dataset_buddha-master/buddha_imgs" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense2.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
-    python run_sfm.py --image_dir "C:/Users/Rudolf/Downloads/dataset_buddha-master/dataset_buddha-master/imgs_only" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense2.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
+    python run_sfm.py --image_dir "C:/Users/Rudolf/Downloads/dataset_buddha-master/dataset_buddha-master/imgs_only" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense3.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
 
 Run `python run_sfm.py --help` for all options.
 """
@@ -613,6 +613,28 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     msh.add_argument(
+        "--mesh-trim",
+        type=float,
+        default=None,
+        metavar="F",
+        help=(
+            "Phantom-surface trim distance, in multiples of the cloud's point spacing "
+            "(ignores quality preset).  Poisson vertices further than this from any "
+            "input point were invented by the solver and are removed.  "
+            "Lower = more aggressive.  Typical range: 2–5."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-target-points",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Downsample the cloud to roughly N points before meshing "
+            "(ignores quality preset).  0 = keep every point."
+        ),
+    )
+    msh.add_argument(
         "--mesh-no-clean",
         action="store_true",
         help="Disable mesh cleaning (raw reconstruction output, not recommended).",
@@ -664,11 +686,55 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     msh.add_argument(
-        "--mesh-keep-pointcloud",
+        "--mesh-hole-size",
+        type=float,
+        default=None,
+        metavar="D",
+        help=(
+            "Largest hole to close, in scene units.  "
+            "Default: derived from the point spacing via the quality preset."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-keep-largest",
         action="store_true",
         help=(
-            "Save the cleaned/prepared point cloud as a separate PLY file "
-            "alongside the mesh output."
+            "Keep only the largest connected component of the mesh, discarding all "
+            "other surfaces (useful for single-object scans)."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-keep-pointcloud",
+        action="store_true",
+        default=True,
+        help=(
+            "Save the cleaned/prepared point cloud (with normals) as a separate PLY "
+            "alongside the mesh.  ON by default — this is the exact input surface "
+            "reconstruction consumed, so it is needed to reproduce the mesh."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-no-keep-pointcloud",
+        action="store_false",
+        dest="mesh_keep_pointcloud",
+        help="Do not write the prepared point cloud PLY alongside the mesh.",
+    )
+    msh.add_argument(
+        "--mesh-self-intersections",
+        action="store_true",
+        help=(
+            "Detect and remove self-intersecting triangles, and report them in the "
+            "quality check.  Off by default: the test costs seconds to minutes "
+            "depending on mesh size, and a Poisson iso-surface cannot self-intersect "
+            "by construction — enable it for --mesh-method bpa/alpha."
+        ),
+    )
+    msh.add_argument(
+        "--mesh-no-validate",
+        action="store_true",
+        help=(
+            "Skip the mesh quality report (accuracy, completeness, topology).  "
+            "Validation is ON by default."
         ),
     )
     msh.add_argument(
@@ -1679,17 +1745,35 @@ def main(argv=None) -> int:
         else:
             _mesh_out = args.mesh_output
 
+        # Camera centres let the mesh stage orient point normals towards the
+        # views that actually observed each surface point, which is both faster
+        # and far more reliable than the tangent-plane MST fallback — and this
+        # pipeline has already solved for them.
+        from sfm.utils import camera_center as _camera_center
+
+        _cam_centers = np.array(
+            [_camera_center(cameras[c]["R"], cameras[c]["t"]) for c in sorted(cameras)],
+            dtype=np.float64,
+        ) if cameras else None
+
         try:
             mesh_pipeline = MeshPipeline(args)
             mesh_result = mesh_pipeline.run(
                 pointcloud_path=_mesh_input,
                 output_path=_mesh_out,
+                camera_centers=_cam_centers,
             )
 
             if mesh_result.success:
                 logger.info(f"[MESH] Mesh saved  : {mesh_result.output_path}")
                 logger.info(f"[MESH] Faces       : {mesh_result.face_count:,}")
                 logger.info(f"[MESH] Vertices    : {mesh_result.vertex_count:,}")
+                if mesh_result.cloud_path:
+                    logger.info(f"[MESH] Cloud saved : {mesh_result.cloud_path}")
+                if mesh_result.report_path:
+                    logger.info(f"[MESH] Report      : {mesh_result.report_path}")
+                if mesh_result.verdict:
+                    logger.info(f"[MESH] Verdict     : {mesh_result.verdict}")
                 if viz is not None:
                     try:
                         viz.on_mesh_complete(mesh_result.output_path, mesh_result.stats)
