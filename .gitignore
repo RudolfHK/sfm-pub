@@ -16,3 +16,6 @@ env/
 sfm_visualization*/
 .sfm_checkpoints/
 eval_results/
+
+run_l2/*
+run_l2_ref/*

@@ -197,6 +197,7 @@ class IncrementalSfM:
         pnp_backend: str = "cv2",
         ba_options: Optional[dict] = None,
         track_completion: bool = True,
+        global_tracks: bool = True,
     ) -> None:
         self.features            = features
         self.verified_pairs      = verified_pairs
@@ -207,6 +208,8 @@ class IncrementalSfM:
         self.fix_principal_point = fix_principal_point
         self.merge_tracks        = merge_tracks
         self.track_completion    = track_completion
+        self.global_tracks       = global_tracks
+        self._track_graph        = None      # built lazily on first use
         self.viz                 = visualizer
         self._ba_step            = 0
         self._local_ba_window    = local_ba_window
@@ -370,6 +373,11 @@ class IncrementalSfM:
         fallback_score = -1.0
 
         for pair_key, data in self.verified_pairs.items():
+            # A planar pair recovered from a homography is usable for
+            # registration but not as a seed: its structure is degenerate for
+            # setting the scale basis of the whole reconstruction.
+            if data.get("planar"):
+                continue
             n_inliers = data["n_inliers"]
             t_vec = data["t"]
             baseline = float(np.linalg.norm(t_vec))
@@ -1019,9 +1027,77 @@ class IncrementalSfM:
                     kp2pt[dst][k] = p
                     n_added += 1
 
+        # ── Pass 1b: completion along global tracks ───────────────────────
+        # The pairwise pass above only reaches one hop per call: it needs one
+        # end of a verified match to already carry a 3-D point.  A chain
+        # A-B-C therefore takes as many rounds as it has links, and any link
+        # whose two endpoints are both unassigned is never followed at all.
+        # The track graph closes the chain transitively in one step, which is
+        # what turns two-view points into multi-view points.
+        n_added += self._complete_from_track_graph(kp2pt, registered, pts_arr)
+
         # ── Pass 2: merging ───────────────────────────────────────────────
         n_merged = self._merge_duplicate_tracks(kp2pt, registered)
         return n_added, n_merged
+
+    def _complete_from_track_graph(
+        self,
+        kp2pt: Dict[int, np.ndarray],
+        registered: Set[int],
+        pts_arr: np.ndarray,
+    ) -> int:
+        """
+        Add every observation the global track graph proves belongs to a
+        3-D point, gated on the same reprojection test as triangulation.
+
+        Returns the number of observations added.
+        """
+        if not self.global_tracks or pts_arr.size == 0:
+            return 0
+        if self._track_graph is None:
+            from .tracks import TrackGraph
+            self._track_graph = TrackGraph(self.verified_pairs)
+        graph = self._track_graph
+        if not graph.members:
+            return 0
+
+        # Which 3-D point does each track currently stand for?  A track can
+        # temporarily map to several points; the one with the most
+        # observations wins, and the merge pass reconciles the rest.
+        votes: Dict[int, Dict[int, int]] = {}
+        for img in registered:
+            arr = kp2pt.get(img)
+            if arr is None:
+                continue
+            for kp in np.nonzero(arr >= 0)[0]:
+                tid = graph.track_id(img, int(kp))
+                if tid is None:
+                    continue
+                votes.setdefault(tid, {})
+                pt = int(arr[kp])
+                votes[tid][pt] = votes[tid].get(pt, 0) + 1
+
+        n_added = 0
+        for tid, counts in votes.items():
+            pt_idx = max(counts.items(), key=lambda kv: kv[1])[0]
+            for img, kp in graph.observations_in(tid, registered):
+                if kp2pt[img][kp] >= 0:
+                    continue
+                if img in self._pt_observers[pt_idx]:
+                    continue
+                err, depth = self._reproj_batch(
+                    img,
+                    pts_arr[np.array([pt_idx])],
+                    self._undist_kps[img][np.array([kp])],
+                )
+                if not (err[0] <= self.max_reproj_err and depth[0] > 0):
+                    continue
+                orig = self.features[img]["keypoints"][kp].astype(np.float64)
+                self._link_kp(img, kp, pt_idx)
+                self._add_obs(img, pt_idx, orig)
+                kp2pt[img][kp] = pt_idx
+                n_added += 1
+        return n_added
 
     def _merge_candidates(
         self, kp2pt: Dict[int, np.ndarray], registered: Set[int]
@@ -1436,14 +1512,23 @@ class IncrementalSfM:
         if K_ref is not None:
             self.K = K_ref
             self.dist_coeffs = dist_ref
-            # Propagate refined k1/k2 into per-camera intrinsics so subsequent
-            # _get_dist() calls return the updated distortion (W-03 fix).
+            # Propagate the refined intrinsics into the per-camera table.
+            # Writing back only k1/k2 left the refined focal and principal
+            # point on the floor, so every later _get_K() still used the
+            # unrefined values while BA thought it had improved them.
             if self._per_cam_intr is not None:
                 k1_new = float(dist_ref[0]) if len(dist_ref) > 0 else 0.0
                 k2_new = float(dist_ref[1]) if len(dist_ref) > 1 else 0.0
+                fx_new = float(K_ref[0, 0])
+                fy_new = float(K_ref[1, 1])
+                cx_new = float(K_ref[0, 2])
+                cy_new = float(K_ref[1, 2])
                 for img_idx in self._per_cam_intr:
                     self._per_cam_intr[img_idx] = (
-                        self._per_cam_intr[img_idx].update_from_ba(k1=k1_new, k2=k2_new)
+                        self._per_cam_intr[img_idx].update_from_ba(
+                            fx=fx_new, fy=fy_new, cx=cx_new, cy=cy_new,
+                            k1=k1_new, k2=k2_new,
+                        )
                     )
             if np.any(dist_ref != 0):
                 for img_idx in self.features:

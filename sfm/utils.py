@@ -64,25 +64,21 @@ def load_image(path) -> np.ndarray:
 
 def read_exif_focal_px(path, image_shape: tuple) -> Optional[float]:
     """
-    Read 35 mm-equivalent focal length from EXIF and convert to pixels.
-    Returns None when EXIF data is absent or incomplete.
-    """
-    try:
-        from PIL import Image as _PILImage
-        with _PILImage.open(str(path)) as img:
-            exif = img._getexif()
-            if exif is None:
-                return None
-            focal_35 = exif.get(0xA405)   # FocalLengthIn35mmFilm
-            if focal_35 is None or focal_35 == 0:
-                return None
-    except Exception:
-        return None
+    Focal length in pixels from EXIF, or None when EXIF says nothing usable.
 
-    h, w = image_shape[:2]
-    sensor_diag_35mm = float(np.sqrt(36.0 ** 2 + 24.0 ** 2))
-    image_diag_px    = float(np.sqrt(h ** 2 + w ** 2))
-    return float(focal_35) / sensor_diag_35mm * image_diag_px
+    Delegates to :mod:`sfm.exif_focal`, which tries the 35 mm equivalent, the
+    focal-plane resolution and a sensor-width table in that order.  Only the
+    first of those was consulted before, which made cameras that write
+    ``FocalLength`` but no 35 mm equivalent look uncalibrated.
+    """
+    est = read_exif_focal(path, image_shape)
+    return est.focal_px if est is not None else None
+
+
+def read_exif_focal(path, image_shape: tuple):
+    """Same as :func:`read_exif_focal_px` but keeps the provenance."""
+    from .exif_focal import focal_from_exif
+    return focal_from_exif(path, image_shape)
 
 
 # ─── Camera maths ────────────────────────────────────────────────────────────
@@ -90,20 +86,27 @@ def read_exif_focal_px(path, image_shape: tuple) -> Optional[float]:
 def estimate_intrinsics(
     image_shape: tuple,
     image_path=None,
-) -> np.ndarray:
+    return_source: bool = False,
+):
     """
     Estimate a plausible pinhole K from image dimensions (+ optional EXIF).
 
-    Tries FocalLengthIn35mmFilm from EXIF first; falls back to
-    focal ≈ max(W, H), which is ~53° diagonal FoV.
+    Tries every EXIF route in :mod:`sfm.exif_focal`; falls back to
+    focal = max(W, H), which is ~53° diagonal FoV and, on a camera whose true
+    field of view differs, wrong by whatever that difference happens to be.
+    The caller is told which of the two happened via ``return_source`` so it
+    can start a focal search instead of trusting the fallback.
     """
     h, w = image_shape[:2]
     focal: Optional[float] = None
+    source = "fallback_max_wh"
+    detail = "no usable EXIF; focal = max(W, H)"
 
     if image_path is not None:
-        focal = read_exif_focal_px(image_path, image_shape)
-        if focal is not None:
-            logger.info(f"EXIF focal length: {focal:.0f} px")
+        est = read_exif_focal(image_path, image_shape)
+        if est is not None:
+            focal, source, detail = est.focal_px, est.source, est.detail
+            logger.info("EXIF focal length: %.0f px (%s)", focal, detail)
 
     if focal is None:
         focal = float(max(h, w))
@@ -116,6 +119,8 @@ def estimate_intrinsics(
         dtype=np.float64,
     )
     logger.debug(f"K: f={focal:.0f}, cx={w/2:.1f}, cy={h/2:.1f}")
+    if return_source:
+        return K, {"source": source, "detail": detail, "focal_px": float(focal)}
     return K
 
 

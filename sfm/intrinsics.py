@@ -158,18 +158,12 @@ def estimate_per_image(
 
 
 def _read_exif_focal(path, h: int, w: int) -> Optional[float]:
-    """Read FocalLengthIn35mmFilm from EXIF and convert to pixels."""
-    try:
-        from PIL import Image as _PIL
-        with _PIL.open(str(path)) as img:
-            exif = img._getexif()
-            if exif is None:
-                return None
-            focal_35 = exif.get(0xA405)
-            if not focal_35:
-                return None
-    except Exception:
-        return None
+    """Focal length in pixels from EXIF, all routes, or None.
 
-    image_diag = float(np.sqrt(h**2 + w**2))
-    return float(focal_35) / _SENSOR_DIAG_35MM * image_diag
+    Shares :mod:`sfm.exif_focal` with the shared-intrinsics path so that
+    per-camera and shared estimates can never disagree about what a file says.
+    """
+    from .exif_focal import focal_from_exif
+
+    est = focal_from_exif(path, (h, w))
+    return est.focal_px if est is not None else None

@@ -65,6 +65,23 @@ class MVSDensifier:
         self.max_dense_pts         = max_dense_pts
         self.mvs_fusion            = mvs_fusion
         self.fusion_min_views      = fusion_min_views
+        # Upper bound on the searched window.  SGBM allocates proportionally to
+        # it, so an unbounded range derived from a bad depth estimate could
+        # exhaust memory.
+        # SGBM allocates several buffers proportional to numDisparities times
+        # the image area; 512 keeps a full-resolution 2736 x 1540 pair inside a
+        # few hundred megabytes.  Pairs needing more are scaled down instead.
+        self._max_num_disparities  = max(self.num_disparities, 512)
+        # width x height x disparity range that the matcher may cost.  SGBM
+        # holds several int16 buffers of that size, so 6e7 corresponds to a few
+        # hundred megabytes.  A full-resolution wide-baseline pair on this
+        # dataset would ask for 4e9 and simply fails to allocate.
+        self._sgbm_cost_budget     = 6.0e7
+        # Largest baseline, relative to the camera-to-object distance, that
+        # still yields a disparity range fitting inside the image.  With
+        # f ~ 0.7 x width, a ratio of 0.35 puts the nearest surface at roughly
+        # a quarter of the image width even after rectification zoom.
+        self.max_baseline_ratio    = 0.35
 
     # ── public API ────────────────────────────────────────────────────────
 
@@ -76,6 +93,7 @@ class MVSDensifier:
         image_paths: Dict[int, Path],
         max_reproj_error: float = 2.0,
         covisibility_counts: Optional[Dict[Tuple[int, int], int]] = None,
+        points_3d: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Run dense reconstruction for all valid stereo pairs.
@@ -90,6 +108,12 @@ class MVSDensifier:
         covisibility_counts : {(i,j): shared_3d_point_count, i<j} — when provided,
                               pairs are selected by descending shared-point count
                               instead of consecutive index proximity.
+        points_3d           : the sparse cloud.  Used to derive the disparity
+                              search range per pair, and to reject dense points
+                              that fall far outside the reconstructed scene.
+                              Without it the stage falls back to a fixed window,
+                              which is what produced unusable depth (see the
+                              note on the disparity range below).
 
         Returns
         -------
@@ -112,6 +136,14 @@ class MVSDensifier:
         scene_scale = float(np.median(spread)) if len(spread) > 1 else 1.0
         min_base  = self.min_baseline_fraction * scene_scale
 
+        # Typical distance from a camera to the object; the baseline is judged
+        # against it because disparity is proportional to baseline over depth.
+        if points_3d is not None and len(points_3d) >= 8:
+            obj_centre = np.median(np.asarray(points_3d, dtype=np.float64), axis=0)
+        else:
+            obj_centre = centres.mean(0)
+        scene_depth = float(np.median(np.linalg.norm(centres - obj_centre, axis=1)))
+
         # Build per-image neighbour lists
         if covisibility_counts:
             # Covisibility-based: for each image, sort candidates by shared 3-D point count
@@ -124,8 +156,26 @@ class MVSDensifier:
                         candidates.append((b, count))
                     elif b == i and a in cam_set:
                         candidates.append((a, count))
-                candidates.sort(key=lambda x: x[1], reverse=True)
-                neighbours_map[i] = [c for c, _ in candidates[: self.max_pairs_per_image]]
+                # Rectified stereo needs the two views similar enough that the
+                # disparity range fits inside the image: OpenCV sizes its
+                # buffers from width - (minDisparity + numDisparities).  The
+                # ratio of disparity to width does not change with the working
+                # resolution, so a pair that does not fit cannot be rescued by
+                # scaling it down.  Candidates are therefore filtered by the
+                # predicted disparity of the nearest scene point before
+                # covisibility decides the order.
+                Ci = camera_center(cameras[i]["R"], cameras[i]["t"])
+                usable = []
+                for cand, count in candidates:
+                    Cc = camera_center(cameras[cand]["R"], cameras[cand]["t"])
+                    base = float(np.linalg.norm(Cc - Ci))
+                    if base < min_base:
+                        continue
+                    if scene_depth > 0 and base / scene_depth > self.max_baseline_ratio:
+                        continue
+                    usable.append((cand, count))
+                usable.sort(key=lambda x: x[1], reverse=True)
+                neighbours_map[i] = [c for c, _ in usable[: self.max_pairs_per_image]]
             logger.info(
                 "[MVS] Pair selection: covisibility-based "
                 f"(top-{self.max_pairs_per_image} per image)"
@@ -183,6 +233,7 @@ class MVSDensifier:
                     Ri_proc, ti_proc, R_rel_proc, t_rel_proc,
                     K, dist_coeffs,
                     path_left, path_right,
+                    points_3d=points_3d,
                 )
 
                 if len(pts) > 0:
@@ -301,6 +352,107 @@ class MVSDensifier:
 
     # ── internals ─────────────────────────────────────────────────────────
 
+
+
+    def _required_disparity(
+        self, K: np.ndarray, Ri: np.ndarray, ti: np.ndarray,
+        t_rel: np.ndarray, points_3d: Optional[np.ndarray],
+    ) -> Optional[Tuple[float, float]]:
+        """Approximate (smallest, largest) disparity of the scene for this pair."""
+        if points_3d is None or len(points_3d) < 8:
+            return None
+        pts = np.asarray(points_3d, dtype=np.float64)
+        z = (Ri @ pts.T).T[:, 2] + np.asarray(ti, dtype=np.float64).ravel()[2]
+        z = z[np.isfinite(z) & (z > 1e-6)]
+        if z.size < 8:
+            return None
+        z_near = float(np.percentile(z, 2)) * 0.7
+        z_far = float(np.percentile(z, 98)) * 1.6
+        baseline = float(np.linalg.norm(np.asarray(t_rel, dtype=np.float64)))
+        f = float(K[0, 0])
+        if baseline <= 0 or z_near <= 0 or z_far <= z_near:
+            return None
+        return f * baseline / z_far, f * baseline / z_near
+
+    def _resolution_for_pair(
+        self, K: np.ndarray, Ri: np.ndarray, ti: np.ndarray,
+        R_rel: np.ndarray, t_rel: np.ndarray, points_3d: Optional[np.ndarray],
+        image_shape: Optional[Tuple[int, int]] = None,
+    ) -> float:
+        """
+        Working scale for one pair, from the memory the matcher would need.
+
+        SGBM allocates buffers proportional to width x height x disparity
+        range.  Scaling the pair by s shrinks the area by s squared and the
+        disparity range by s, so the cost falls with the cube of the scale.
+        The factor is therefore chosen as the cube root of the ratio between
+        the budget and the full-resolution cost, which is the largest scale
+        that still fits.
+        """
+        rng = self._required_disparity(K, Ri, ti, t_rel, points_3d)
+        if rng is None or image_shape is None:
+            return 1.0
+        d_min, d_max = rng
+        span = max(d_max - d_min, 16.0)
+        h, w = image_shape
+        cost = float(w) * float(h) * span
+        if cost <= self._sgbm_cost_budget:
+            return 1.0
+        scale = (self._sgbm_cost_budget / cost) ** (1.0 / 3.0)
+        return float(np.clip(scale, 0.1, 1.0))
+
+    def _disparity_range(
+        self,
+        P1: np.ndarray,
+        P2: np.ndarray,
+        Ri: np.ndarray,
+        ti: np.ndarray,
+        points_3d: Optional[np.ndarray],
+    ) -> Tuple[int, int]:
+        """
+        Disparity window (minDisparity, numDisparities) for one rectified pair.
+
+        Derived from the depth range of the sparse cloud as seen by this
+        camera.  Returns the configured fixed window when no cloud is
+        available, and logs that this is a guess.
+        """
+        fallback = (0, self.num_disparities)
+        if points_3d is None or len(points_3d) < 8:
+            return fallback
+
+        pts = np.asarray(points_3d, dtype=np.float64)
+        z = (Ri @ pts.T).T[:, 2] + np.asarray(ti, dtype=np.float64).ravel()[2]
+        z = z[np.isfinite(z) & (z > 1e-6)]
+        if z.size < 8:
+            return fallback
+
+        # Robust range, widened so points slightly outside the sparse cloud
+        # still fall inside the search window.
+        z_near = float(np.percentile(z, 2)) * 0.7
+        z_far = float(np.percentile(z, 98)) * 1.6
+        if not (0 < z_near < z_far):
+            return fallback
+
+        f_rect = float(P1[0, 0])
+        baseline = abs(float(P2[0, 3]) / f_rect) if f_rect else 0.0
+        if baseline <= 0.0:
+            return fallback
+
+        d_far = f_rect * baseline / z_far        # smallest disparity
+        d_near = f_rect * baseline / z_near      # largest disparity
+
+        min_disp = int(np.floor(d_far / 16.0) * 16)
+        span = d_near - min_disp
+        num_disp = int(np.ceil(span / 16.0) * 16)
+        num_disp = int(np.clip(num_disp, 64, self._max_num_disparities))
+        if min_disp < 0:
+            min_disp = 0
+        logger.debug(
+            "  MVS disparity window: %d .. %d px (depth %.3f .. %.3f, "
+            "baseline %.4f)", min_disp, min_disp + num_disp, z_near, z_far, baseline,
+        )
+        return min_disp, num_disp
+
     def _process_pair(
         self,
         Ri: np.ndarray,
@@ -311,6 +463,7 @@ class MVSDensifier:
         dist_coeffs: np.ndarray,
         path_i: Path,
         path_j: Path,
+        points_3d: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Run SGBM on one rectified stereo pair; return world pts + RGB colors."""
         try:
@@ -321,19 +474,73 @@ class MVSDensifier:
             return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.uint8)
 
         h, w = img_i.shape[:2]
-        size = (w, h)
         D    = dist_coeffs.astype(np.float64)
 
-        # Stereo rectification
-        try:
-            R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
-                K, D, K, D, size, R_rel, t_rel,
-                flags=cv2.CALIB_ZERO_DISPARITY,
-                alpha=0,
+        # ── Working resolution and disparity window ───────────────────────
+        # These are wide-baseline pairs: with a baseline-to-depth ratio near a
+        # half, the object's true disparity runs into the thousands of pixels
+        # at full resolution.  SGBM allocates buffers proportional to
+        # width x height x disparity range, so such a window cannot even be
+        # allocated, and the fixed 0..256 window used before simply never
+        # searched where the matches are.  Scaling image and intrinsics by the
+        # same factor scales disparity by that factor and leaves the recovered
+        # geometry unchanged.
+        #
+        # The window can only be measured after rectification, because
+        # rectifying with alpha=0 changes the focal length.  So the scale is
+        # chosen, the pair is rectified, the true window is measured, and if it
+        # still does not fit the budget the step is repeated at a smaller
+        # scale.
+        K_full, w_full, h_full = K.copy(), w, h
+        scale = 1.0
+        rect = None
+        for _attempt in range(4):
+            size = (max(64, int(round(w_full * scale))),
+                    max(64, int(round(h_full * scale))))
+            K_s = K_full.copy()
+            K_s[0, :] *= size[0] / w_full
+            K_s[1, :] *= size[1] / h_full
+            try:
+                R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
+                    K_s, D, K_s, D, size, R_rel, t_rel,
+                    flags=cv2.CALIB_ZERO_DISPARITY, alpha=0,
+                )
+            except cv2.error as exc:
+                logger.warning(f"MVS: stereoRectify failed: {exc}")
+                return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.uint8)
+
+            min_disp, num_disp = self._disparity_range(P1, P2, Ri, ti, points_3d)
+            cost = float(size[0]) * float(size[1]) * float(num_disp)
+            rect = (size, K_s, R1, R2, P1, P2, Q, min_disp, num_disp)
+            if cost <= self._sgbm_cost_budget or scale <= 0.1:
+                break
+            scale = max(0.1, scale * (self._sgbm_cost_budget / cost) ** (1.0 / 3.0) * 0.95)
+
+        size, K_s, R1, R2, P1, P2, Q, min_disp, num_disp = rect
+
+        # The searched window has to fit inside the image: OpenCV computes its
+        # buffers from width - (minDisparity + numDisparities), which turns
+        # negative otherwise and fails the allocation.  The ratio of disparity
+        # to width does not change with the working resolution, since both
+        # shrink together, so a pair that does not fit cannot be rescued by
+        # scaling and is skipped.  That is the honest outcome: such a pair is
+        # too wide-baseline for rectified block matching.
+        if min_disp + num_disp >= 0.6 * size[0]:
+            logger.debug(
+                "  MVS pair skipped: disparity window %d..%d px does not fit a "
+                "%d px wide image (baseline too wide for rectified stereo)",
+                min_disp, min_disp + num_disp, size[0],
             )
-        except cv2.error as exc:
-            logger.warning(f"MVS: stereoRectify failed: {exc}")
             return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.uint8)
+        if size != (w_full, h_full):
+            img_i = cv2.resize(img_i, size, interpolation=cv2.INTER_AREA)
+            img_j = cv2.resize(img_j, size, interpolation=cv2.INTER_AREA)
+        K = K_s
+        w, h = size
+        logger.debug(
+            "  MVS pair at %dx%d (scale %.3f), disparity window %d..%d px",
+            size[0], size[1], size[0] / w_full, min_disp, min_disp + num_disp,
+        )
 
         map1x, map1y = cv2.initUndistortRectifyMap(K, D, R1, P1, size, cv2.CV_32FC1)
         map2x, map2y = cv2.initUndistortRectifyMap(K, D, R2, P2, size, cv2.CV_32FC1)
@@ -347,8 +554,8 @@ class MVSDensifier:
         # Semi-global block matching
         bs     = self.block_size
         stereo = cv2.StereoSGBM_create(
-            minDisparity=0,
-            numDisparities=self.num_disparities,
+            minDisparity=min_disp,
+            numDisparities=num_disp,
             blockSize=bs,
             P1=8  * 3 * bs * bs,
             P2=32 * 3 * bs * bs,
@@ -366,7 +573,7 @@ class MVSDensifier:
 
         # Valid mask: positive disparity + finite depth
         valid = (
-            (disp > 1.0)
+            (disp > min_disp + 0.5)
             & np.isfinite(pts3d_rect[:, :, 2])
             & (pts3d_rect[:, :, 2] > 0)
             & (pts3d_rect[:, :, 2] < 1e6)
@@ -395,11 +602,22 @@ class MVSDensifier:
         if len(pts_world) == 0:
             return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.uint8)
 
-        # Filter: distance outliers (keep within 10× median distance from origin)
-        dists  = np.linalg.norm(pts_world, axis=1)
-        median = float(np.median(dists))
-        dist_valid = dists < max(median * 10.0, 1e-3)
-        pts_world  = pts_world[dist_valid]
-        colors_rgb = colors_rgb[dist_valid]
+        # Filter: keep what lies inside the reconstructed scene.
+        # The old test measured distance from the *world origin*, which is the
+        # first camera and not the object, and compared against the median of
+        # the same distances — so when most points were wrong, the median was
+        # wrong too and the filter kept them.  The sparse cloud is the trusted
+        # geometry, so the bound comes from it.
+        if points_3d is not None and len(points_3d) >= 8:
+            sparse = np.asarray(points_3d, dtype=np.float64)
+            centre = np.median(sparse, axis=0)
+            radius = float(np.percentile(np.linalg.norm(sparse - centre, axis=1), 98))
+            keep = np.linalg.norm(pts_world - centre, axis=1) <= max(3.0 * radius, 1e-6)
+        else:
+            dists = np.linalg.norm(pts_world, axis=1)
+            median = float(np.median(dists))
+            keep = dists < max(median * 10.0, 1e-3)
+        pts_world  = pts_world[keep]
+        colors_rgb = colors_rgb[keep]
 
         return pts_world.astype(np.float64), colors_rgb

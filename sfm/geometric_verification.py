@@ -88,15 +88,87 @@ class GeometricVerifier:
         ransac_threshold: float = 1.0,
         min_inliers: int = 15,
         confidence: float = 0.999,
+        planar_ratio: float = 0.85,
+        planar_fallback: bool = True,
     ) -> None:
         self.ransac_threshold = ransac_threshold
         self.min_inliers      = min_inliers
         self.confidence       = confidence
+        self.planar_ratio     = planar_ratio
+        self.planar_fallback  = planar_fallback
 
         if _HAS_USAC_MAGSAC:
             logger.debug("Geometric verifier: USAC_MAGSAC for both F and E.")
         else:
             logger.debug("Geometric verifier: FM_RANSAC / RANSAC (fallback).")
+
+    # ── planar pairs ──────────────────────────────────────────────────────
+
+    def _pose_from_homography(
+        self,
+        H: np.ndarray,
+        pts1: np.ndarray,
+        pts2: np.ndarray,
+        h_inliers: np.ndarray,
+        K: np.ndarray,
+    ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """
+        Relative pose for a planar pair, from the homography.
+
+        ``cv2.decomposeHomographyMat`` returns up to four (R, t, n) solutions.
+        Two are removed by requiring the plane normal to face the first camera
+        (n_z < 0 in the camera frame used here), and the remaining ambiguity is
+        settled by cheirality: triangulate the H-inliers under each candidate
+        and keep the candidate that puts the most points in front of both
+        cameras.
+
+        Returns (R, t, keep_mask) where keep_mask selects the correspondences
+        that survived cheirality, or None when nothing usable was found.
+        """
+        if not self.planar_fallback:
+            return None
+        try:
+            n_sol, Rs, ts, normals = cv2.decomposeHomographyMat(H, K)
+        except cv2.error:
+            return None
+        if not n_sol:
+            return None
+
+        p1 = pts1[h_inliers]
+        p2 = pts2[h_inliers]
+        if len(p1) < self.min_inliers:
+            return None
+
+        P1 = K @ np.hstack([np.eye(3), np.zeros((3, 1))])
+        best = None
+        for R_c, t_c, n_c in zip(Rs, ts, normals):
+            t_c = np.asarray(t_c, dtype=np.float64).reshape(3, 1)
+            R_c = np.asarray(R_c, dtype=np.float64)
+            # Plane must lie in front of the first camera.
+            if float(np.asarray(n_c).reshape(3)[2]) < 0.0:
+                continue
+            P2 = K @ np.hstack([R_c, t_c])
+            X_h = cv2.triangulatePoints(P1, P2, p1.T, p2.T)
+            w = X_h[3]
+            valid = np.abs(w) > 1e-10
+            if not valid.any():
+                continue
+            X = np.zeros((3, X_h.shape[1]), dtype=np.float64)
+            X[:, valid] = X_h[:3, valid] / w[valid]
+            z1 = X[2]
+            z2 = (R_c @ X + t_c)[2]
+            front = valid & (z1 > 0) & (z2 > 0)
+            score = int(front.sum())
+            if best is None or score > best[0]:
+                best = (score, R_c, t_c.reshape(3), front)
+
+        if best is None or best[0] < self.min_inliers:
+            return None
+        _, R_best, t_best, front = best
+
+        keep = np.zeros(len(pts1), dtype=bool)
+        keep[np.where(h_inliers)[0][front]] = True
+        return R_best, t_best, keep
 
     # ── public API ────────────────────────────────────────────────────────
 
@@ -173,7 +245,7 @@ class GeometricVerifier:
         # Threshold: if H explains > 85% of F-inliers the scene is (near-)planar.
         if len(pts1_fin) >= 4:
             try:
-                _, mask_h = cv2.findHomography(
+                H, mask_h = cv2.findHomography(
                     pts1_fin.reshape(-1, 1, 2),
                     pts2_fin.reshape(-1, 1, 2),
                     cv2.USAC_MAGSAC if _HAS_USAC_MAGSAC else cv2.RANSAC,
@@ -181,12 +253,41 @@ class GeometricVerifier:
                 )
                 if mask_h is not None:
                     h_ratio = float(mask_h.ravel().sum()) / len(pts1_fin)
-                    if h_ratio > 0.85:
-                        logger.debug(
-                            f"  H/F competition: H inlier ratio={h_ratio:.2f} > 0.85 "
-                            "— planar/degenerate scene, skipping pair"
+                    if h_ratio > self.planar_ratio:
+                        # A homography explains the pair as well as F does, so
+                        # the scene is (near-)planar and E is ill-conditioned.
+                        # Rejecting the pair avoids a wrong pose but throws the
+                        # data away and can disconnect the scene graph.
+                        # Decomposing H is the textbook answer: it yields up to
+                        # four (R, t, n) solutions, of which cheirality keeps
+                        # the one with all points in front of both cameras.
+                        planar = self._pose_from_homography(
+                            H, pts1_fin, pts2_fin, mask_h.ravel().astype(bool), K,
                         )
-                        return None
+                        if planar is None:
+                            logger.debug(
+                                "  H/F competition: ratio=%.2f > %.2f and H did "
+                                "not decompose — skipping pair",
+                                h_ratio, self.planar_ratio,
+                            )
+                            return None
+                        R_h, t_h, keep_h = planar
+                        logger.debug(
+                            "  H/F competition: ratio=%.2f > %.2f — planar pair "
+                            "recovered from the homography (%d inliers)",
+                            h_ratio, self.planar_ratio, int(keep_h.sum()),
+                        )
+                        return {
+                            "F": F,
+                            "E": K.T @ F @ K,
+                            "H": H,
+                            "R": R_h,
+                            "t": t_h,
+                            "inlier_matches": inlier_matches[keep_h],
+                            "n_inliers": int(keep_h.sum()),
+                            "planar": True,
+                            "h_ratio": h_ratio,
+                        }
             except cv2.error:
                 pass
 

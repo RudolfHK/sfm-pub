@@ -38,19 +38,36 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "eval"))
 
-# Flags that switch every accuracy fix off, restoring the measured baseline.
-BEFORE_FLAGS = [
-    "--ba-no-param-scaling",   # uniform parameter scaling (the old conditioning)
-    "--ba-ftol", "1e-4",       # the old solver tolerances
-    "--ba-xtol", "1e-4",
-    "--ba-gtol", "1e-4",
-    "--no-track-completion",   # no track completion or merging
-    # no --focal-search: keeps the max(W, H) fallback
-]
+# Every accuracy fix, as the switch that turns it *off*.  The "before" row is
+# the current binary with all of them off, so nothing but the fixes can
+# explain a difference between the rows.
+OFF = {
+    "focal":  ["--no-focal-search"],           # keep the max(W, H) guess
+    "ba":     ["--ba-no-param-scaling",        # old conditioning …
+               "--ba-ftol", "1e-4",            # … and old tolerances
+               "--ba-xtol", "1e-4",
+               "--ba-gtol", "1e-4"],
+    "tracks": ["--no-track-completion", "--no-global-tracks"],
+    "loop":   ["--no-geometric-loop-closure"],
+}
+ALL_FIXES = list(OFF)
 
-AFTER_FLAGS = [
-    "--focal-search",          # everything else is now the default
-]
+
+def flags_with(enabled) -> list:
+    """Command-line flags that enable exactly the named fixes."""
+    out: list = []
+    for name in ALL_FIXES:
+        if name not in enabled:
+            out.extend(OFF[name])
+    return out
+
+
+# Rows measured by default: the old state, each fix alone, then all of them.
+def default_configs() -> list:
+    configs = [("before", [])]
+    configs += [(f"+{name}", [name]) for name in ALL_FIXES]
+    configs.append(("after", ALL_FIXES))
+    return configs
 
 
 def run(name: str, image_dir: str, results_dir: Path, extra: list,
@@ -61,6 +78,7 @@ def run(name: str, image_dir: str, results_dir: Path, extra: list,
         "--results-dir", str(results_dir), "--",
         "--n_features", str(n_features),
         "--checkpoint-dir", str(ckpt),
+        "--resume",
         *extra,
     ]
     subprocess.run(cmd, cwd=str(_ROOT), check=False,
@@ -82,18 +100,43 @@ def main() -> int:
     ap.add_argument("--gt-dir", required=True, help="Directory holding *_P.txt")
     ap.add_argument("--results-dir", default=str(_ROOT / "eval_results" / "fix_impact"))
     ap.add_argument("--n-features", type=int, default=8000)
+    ap.add_argument(
+        "--only", default=None,
+        help="Comma-separated subset of the configuration names to run, "
+             "e.g. 'before,after'.  Default runs the full ablation.",
+    )
+    ap.add_argument(
+        "--extra", default=None,
+        help="Extra flags appended to every configuration, comma-separated.",
+    )
     args = ap.parse_args()
 
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    configs = default_configs()
+    if args.only:
+        wanted = set(args.only.split(","))
+        configs = [c for c in configs if c[0] in wanted]
+
     rows = []
-    for name, flags in (("before", BEFORE_FLAGS), ("after", AFTER_FLAGS)):
+    for name, enabled in configs:
+        flags = flags_with(enabled)
         # Separate checkpoint dirs: the two runs must not share cached state.
+        if args.extra:
+            flags = flags + args.extra.split(",")
+        # One shared checkpoint for every configuration.  None of the switches
+        # above touches feature extraction or matching — they change bundle
+        # adjustment, focal initialisation, track handling and loop closure,
+        # all of which run afterwards — so every row consumes byte-identical
+        # features and matches.  That is not only faster, it also removes
+        # matching noise as an explanation for any difference between rows.
         rec = run(name, args.image_dir, results_dir, flags, args.n_features,
-                  results_dir / f"ckpt_{name}")
+                  results_dir / "ckpt_shared")
         cams = results_dir / f"{name}.cameras.json"
-        row = {"config": name, "wall_s": rec.get("wall_s"),
+        row = {"config": name, "enabled": enabled, "flags": flags,
+               "wall_s": rec.get("wall_s"),
+               "peak_rss_mb": rec.get("peak_rss_mb"),
                "summary": rec.get("summary", {})}
         if cams.exists():
             row["gt"] = score(cams, args.gt_dir)
@@ -111,8 +154,8 @@ def main() -> int:
         return cur
 
     print()
-    hdr = ("%-8s %6s %8s %8s %7s %9s %9s %9s %8s" %
-           ("config", "cams", "points", "obs", "track",
+    hdr = ("%-8s %6s %8s %8s %7s %8s %9s %9s %9s %8s" %
+           ("config", "cams", "points", "obs", "track", "rmse px",
             "focal %", "rot med°", "pos med%", "wall s"))
     print(hdr)
     print("-" * len(hdr))
@@ -120,12 +163,13 @@ def main() -> int:
         s = r["summary"]
         # 'lsq' is the plain Umeyama fit; gt_pose_eval also reports a RANSAC
         # variant under 'ransac' in the same structure.
-        print("%-8s %6s %8s %8s %7s %9s %9s %9s %8s" % (
+        print("%-8s %6s %8s %8s %7s %8s %9s %9s %9s %8s" % (
             r["config"],
             s.get("n_cameras_registered", "?"),
             s.get("n_points", "?"),
             s.get("n_observations", "?"),
             ("%.2f" % s["mean_track_length"]) if "mean_track_length" in s else "?",
+            _fmt(g(r, "summary", "reprojection", "rmse_px")),
             _fmt(g(r, "gt", "focal", "error_pct")),
             _fmt(g(r, "gt", "alignment", "lsq", "rotation_err_deg", "median")),
             _fmt(g(r, "gt", "alignment", "lsq",

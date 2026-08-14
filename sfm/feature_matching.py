@@ -303,6 +303,73 @@ class FeatureMatcher:
             self.ratio_threshold, self.cross_check,
         )
 
+    def match_pair_indices(
+        self,
+        features: dict,
+        pairs: List[Tuple[int, int]],
+        ratio: Optional[float] = None,
+        min_matches: Optional[int] = None,
+    ) -> MatchDict:
+        """
+        Match exactly the given image pairs, nothing else.
+
+        Used by the geometric loop closure, which proposes a handful of edges
+        the exhaustive stage either never produced or produced too weakly.  A
+        relaxed ``ratio`` may be supplied for that second pass: the pairs are
+        going through full geometric verification afterwards, so admitting more
+        candidate correspondences costs robustness nothing and gives the
+        verifier something to work with.
+
+        Reproducibility follows the same rule as ``match_all``: each pair is
+        seeded from its own position in the sorted pair list, so the result
+        depends only on which pair it is.
+        """
+        pairs = [(min(i, j), max(i, j)) for i, j in pairs]
+        pairs = sorted(dict.fromkeys(pairs))
+        if not pairs:
+            return {}
+
+        use_ratio = self.ratio_threshold if ratio is None else float(ratio)
+        keep_min = self.min_matches if min_matches is None else int(min_matches)
+        n_workers = 1 if has_gpu() else self._resolve_workers(len(pairs))
+        results: List[Optional[np.ndarray]] = [None] * len(pairs)
+
+        def work(k: int) -> int:
+            i, j = pairs[k]
+            if self.seed >= 0:
+                cv2.setRNGSeed(self.seed + 1_000_003 + k)
+            if has_gpu():
+                results[k] = _match_pair(
+                    self._matcher,
+                    features[i]["descriptors"], features[j]["descriptors"],
+                    use_ratio, self.cross_check,
+                )
+            else:
+                results[k] = _match_pair_cpu(
+                    self._thread_matcher(),
+                    features[i]["descriptors"], features[j]["descriptors"],
+                    use_ratio, self.cross_check,
+                )
+            return k
+
+        if n_workers == 1:
+            for k in range(len(pairs)):
+                work(k)
+        else:
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                list(pool.map(work, range(len(pairs))))
+
+        out: MatchDict = {}
+        for k, key in enumerate(pairs):
+            m = results[k]
+            if m is not None and len(m) >= keep_min:
+                out[key] = m
+        logger.info(
+            "Targeted matching: %d of %d pairs kept at ratio %.2f (min %d matches)",
+            len(out), len(pairs), use_ratio, keep_min,
+        )
+        return out
+
     def match_all(self, features: dict) -> MatchDict:
         """
         Exhaustive pairwise matching across all images.

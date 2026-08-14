@@ -15,7 +15,7 @@ Usage
 
     # Example usage for specific dataset:
     python run_sfm.py --image_dir "C:/Users/baldo/Downloads/dataset_buddha-master/dataset_buddha-master/buddha_imgs" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense2.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
-    python run_sfm.py --image_dir "C:/Users/Rudolf/Downloads/dataset_buddha-master/dataset_buddha-master/imgs_only" --output buddha_python_dense.ply --dense --dense_output  buddha_python_dense3.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
+    python run_sfm.py --image_dir "C:/Users/Rudolf/Downloads/dataset_buddha-master/dataset_buddha-master/imgs_only" --output buddha_python_densee3.ply --dense --dense_output  buddha_python_dense3.ply --n_features 12000 --ratio 0.7 --min_inliers 25 --max_reproj_error 3.0 --verbose --visualize
 
 Run `python run_sfm.py --help` for all options.
 """
@@ -343,10 +343,71 @@ def build_parser() -> argparse.ArgumentParser:
         "--focal-search",
         action="store_true",
         help=(
-            "Estimate the focal length before reconstruction by sweeping "
-            "candidates and keeping the one that yields the most accepted "
-            "two-view correspondences.  Use when the images carry no EXIF and "
-            "no calibration is known.  Ignored if --focal or --intrinsics is given."
+            "Force the focal search even when EXIF supplied a focal length.  "
+            "The search sweeps candidates and keeps the one that yields the "
+            "most accepted two-view correspondences.  It already runs "
+            "automatically whenever no EXIF route and no --focal/--intrinsics "
+            "provided a value, because the max(W, H) fallback was measured at "
+            "+47 % on the Buddha set.  Ignored if --focal or --intrinsics is given."
+        ),
+    )
+    p.add_argument(
+        "--no-global-tracks",
+        action="store_true",
+        help=(
+            "Disable transitive feature tracks.  With them on (default) the "
+            "verified matches are closed under union-find, so a corner matched "
+            "A-B and B-C becomes one track seen by three cameras instead of two "
+            "separate two-view points.  Mean track length was 2.70 without them "
+            "against COLMAP's 4.69 on the same images."
+        ),
+    )
+    p.add_argument(
+        "--no-geometric-loop-closure",
+        dest="geometric_loop_closure",
+        action="store_false",
+        help=(
+            "Disable the second pass that closes loops from the estimated "
+            "poses.  The pass proposes image pairs whose reconstructed poses "
+            "say they must overlap but which carry no verified edge, matches "
+            "and verifies exactly those, and reconstructs again; it also gives "
+            "images that failed to register a relaxed second attempt.  Unlike "
+            "--loop-closure it needs no retrieval network."
+        ),
+    )
+    p.add_argument(
+        "--loop-max-angle",
+        type=float,
+        default=45.0,
+        help=(
+            "Largest angle in degrees between two optical axes for the pair to "
+            "count as overlapping in the geometric loop closure."
+        ),
+    )
+    p.add_argument(
+        "--loop-max-centre-ratio",
+        type=float,
+        default=0.6,
+        help=(
+            "Largest distance between two camera centres accepted by the "
+            "geometric loop closure, as a fraction of the median camera-to-"
+            "scene distance."
+        ),
+    )
+    p.add_argument(
+        "--loop-max-pairs",
+        type=int,
+        default=200,
+        help="Upper bound on pairs matched by the geometric loop closure.",
+    )
+    p.add_argument(
+        "--no-focal-search",
+        dest="no_focal_search",
+        action="store_true",
+        help=(
+            "Never run the focal search; keep the max(W, H) fallback when EXIF "
+            "carries nothing.  Reproduces the pre-fix behaviour and is used by "
+            "eval/fix_impact.py as the 'before' configuration."
         ),
     )
     p.add_argument(
@@ -1011,6 +1072,35 @@ def _load_checkpoint(ckpt_dir: Path, name: str, img_hash: str):
         return None
 
 
+
+def _reprojection_summary(points_3d, observations, cameras, K, threshold: float) -> dict:
+    """Reprojection-error statistics over the given observation set."""
+    import numpy as np
+
+    from sfm.utils import reprojection_error
+
+    errs = [
+        reprojection_error(points_3d[pt_idx], np.array([x, y]), K,
+                           cameras[img_idx]["R"], cameras[img_idx]["t"])
+        for img_idx, pt_idx, x, y in observations
+        if img_idx in cameras and pt_idx < len(points_3d)
+    ]
+    errs = np.array([e for e in errs if np.isfinite(e)], dtype=np.float64)
+    if errs.size == 0:
+        return {}
+    return {
+        "rmse_px": float(np.sqrt(np.mean(errs ** 2))),
+        "mean_px": float(np.mean(errs)),
+        "median_px": float(np.median(errs)),
+        "p95_px": float(np.percentile(errs, 95)),
+        "max_px": float(np.max(errs)),
+        "frac_above_threshold": float(np.mean(errs > threshold)),
+        "threshold_px": float(threshold),
+        "n_residuals": int(errs.size),
+        "n_points": int(len(points_3d)),
+    }
+
+
 def _export_cameras(
     path: str,
     cameras: dict,
@@ -1022,6 +1112,8 @@ def _export_cameras(
     stage_times: dict,
     args,
     focal_curve: Optional[list] = None,
+    focal_source: Optional[dict] = None,
+    reproj_prefilter: Optional[dict] = None,
 ) -> None:
     """
     Dump registered camera poses and run statistics to JSON.
@@ -1077,7 +1169,9 @@ def _export_cameras(
             "threshold_px": args.max_reproj_error,
             "n_residuals": int(errs.size),
         },
+        "reprojection_before_export_filter": reproj_prefilter,
         "focal_search": focal_curve,
+        "focal_source": focal_source,
         "shared_K": np.asarray(K, dtype=float).tolist(),
         "dist_coeffs": np.asarray(dist_coeffs, dtype=float).ravel().tolist(),
         "stage_times_s": stage_times,
@@ -1134,6 +1228,8 @@ def _seed_rngs(seed: int) -> None:
     logger.info("RNG seed: %d (OpenCV, NumPy, random)", seed)
 
 
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -1153,6 +1249,7 @@ def main(argv=None) -> int:
     if err is not None:
         logger.error("Input validation failed: %s", err)
         return 1
+
 
     logger.info("=" * 62)
     logger.info("  Structure from Motion Pipeline  [backend: %s]", args.backend)
@@ -1254,7 +1351,9 @@ def main(argv=None) -> int:
         logger.error("No readable images in %s", args.image_dir)
         return 1
 
-    K = estimate_intrinsics(sample.shape, image_path=sample_path)
+    K, focal_source = estimate_intrinsics(
+        sample.shape, image_path=sample_path, return_source=True,
+    )
     dist_coeffs = np.zeros(4, dtype=np.float64)  # refined later by BA if enabled
 
     # A supplied calibration always wins over EXIF and the size-based guess.
@@ -1269,6 +1368,8 @@ def main(argv=None) -> int:
             return 1
         K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
         logger.info("Intrinsics supplied: fx=%.1f fy=%.1f cx=%.1f cy=%.1f", fx, fy, cx, cy)
+        focal_source = {"source": "cli_intrinsics", "detail": args.intrinsics,
+                        "focal_px": fx}
     elif args.focal is not None:
         if args.focal <= 0:
             logger.error("--focal must be positive; got %s", args.focal)
@@ -1278,6 +1379,31 @@ def main(argv=None) -> int:
             args.focal, K[0, 0],
         )
         K[0, 0] = K[1, 1] = float(args.focal)
+        focal_source = {"source": "cli_focal", "detail": f"--focal {args.focal}",
+                        "focal_px": float(args.focal)}
+
+    # Decide here whether the focal search will run, so the decision is logged
+    # once and in one place.  It runs when nothing better than the max(W, H)
+    # fallback is available, which is exactly the case that cost 47 % on the
+    # Buddha set, and it can be forced or suppressed from the command line.
+    _guessed = focal_source.get("source") == "fallback_max_wh"
+    run_focal_search = (
+        not args.no_focal_search
+        and args.focal is None
+        and not args.intrinsics
+        and (_guessed or args.focal_search)
+    )
+    if run_focal_search and _guessed and not args.focal_search:
+        logger.info(
+            "No EXIF focal length found; the size-based fallback (%.0f px) is a "
+            "guess, so the focal search will run.  Suppress with --no-focal-search.",
+            K[0, 0],
+        )
+    elif _guessed and args.no_focal_search:
+        logger.warning(
+            "No EXIF focal length and --no-focal-search: continuing with the "
+            "max(W, H) guess of %.0f px, which is unverified.", K[0, 0],
+        )
 
     if viz is not None:
         try:
@@ -1413,7 +1539,7 @@ def main(argv=None) -> int:
 
     # ── Focal-length search (before verification: E depends on K) ─────────
     focal_curve = None
-    if args.focal_search and args.focal is None and not args.intrinsics:
+    if run_focal_search:
         from sfm.focal_search import search_focal
 
         t = time.time()
@@ -1424,6 +1550,12 @@ def main(argv=None) -> int:
             min_inliers=args.min_inliers,
             max_reproj_error=args.max_reproj_error,
         )
+        focal_source = {
+            "source": "focal_search",
+            "detail": f"swept {len(focal_curve)} candidates around "
+                      f"{K[0, 0]:.0f} px",
+            "focal_px": float(best_focal),
+        }
         K[0, 0] = K[1, 1] = best_focal
         stage_times["focal_search"] = time.time() - t
     elif args.focal_search:
@@ -1577,31 +1709,42 @@ def main(argv=None) -> int:
             f"Per-camera intrinsics: initialised {len(per_cam_intr)} cameras from EXIF"
         )
 
-    sfm = IncrementalSfM(
-        features=features,
-        verified_pairs=verified,
-        K=K,
-        max_reproj_error=args.max_reproj_error,
-        ba_interval=args.ba_interval,
-        dist_coeffs=dist_coeffs,
-        refine_intrinsics=refine_intrinsics,
-        fix_principal_point=getattr(args, "ba_fix_principal_point", False),
-        visualizer=viz,
-        merge_tracks=getattr(args, "track_merge", False),
-        per_camera_intrinsics=per_cam_intr,
-        ba_backend=getattr(args, "ba_backend", "scipy"),
-        local_ba_window=getattr(args, "local_ba_window", 0),
-        ba_separate_focal=getattr(args, "ba_separate_focal", False),
-        pnp_backend=getattr(args, "pnp_backend", "cv2"),
-        track_completion=not args.no_track_completion,
-        ba_options={
-            "ftol": args.ba_ftol,
-            "xtol": args.ba_xtol,
-            "gtol": args.ba_gtol,
-            "max_nfev": args.ba_max_nfev,
-            "param_scaling": not args.ba_no_param_scaling,
-        },
-    )
+    def _build_sfm(verified_pairs, K_start):
+        """One place that knows how to configure the reconstruction.
+
+        The geometric loop closure needs a second, identically configured
+        instance after it has enriched the scene graph, and two copies of this
+        argument list would drift apart.
+        """
+        return IncrementalSfM(
+            features=features,
+            verified_pairs=verified_pairs,
+            K=K_start,
+            max_reproj_error=args.max_reproj_error,
+            ba_interval=args.ba_interval,
+            dist_coeffs=dist_coeffs,
+            refine_intrinsics=refine_intrinsics,
+            fix_principal_point=getattr(args, "ba_fix_principal_point", False),
+            visualizer=viz,
+            merge_tracks=getattr(args, "track_merge", False),
+            per_camera_intrinsics=per_cam_intr,
+            ba_backend=getattr(args, "ba_backend", "scipy"),
+            local_ba_window=getattr(args, "local_ba_window", 0),
+            ba_separate_focal=getattr(args, "ba_separate_focal", False),
+            pnp_backend=getattr(args, "pnp_backend", "cv2"),
+            track_completion=not args.no_track_completion,
+            global_tracks=not args.no_global_tracks,
+            ba_options={
+                "ftol": args.ba_ftol,
+                "xtol": args.ba_xtol,
+                "gtol": args.ba_gtol,
+                "max_nfev": args.ba_max_nfev,
+                "param_scaling": not args.ba_no_param_scaling,
+            },
+        )
+
+    K_initial = K.copy()
+    sfm = _build_sfm(verified, K_initial)
     try:
         cameras, points_3d, observations, kp_to_3d = sfm.reconstruct()
     except Exception as exc:
@@ -1612,6 +1755,66 @@ def main(argv=None) -> int:
         return 1
 
     stage_times["reconstruction"] = time.time() - t
+
+    # ── Geometric loop closure and rescue of unregistered images ─────────
+    # The poses now say which images ought to overlap.  Any such pair without
+    # a verified edge is a missing constraint: adding it ties the block
+    # together instead of letting the error grow along the registration
+    # order.  Images that never registered get a second, relaxed attempt
+    # against the cameras that did.  Both are cheap because only the proposed
+    # pairs are matched, not the full N².
+    if getattr(args, "geometric_loop_closure", True) and len(cameras) >= 3:
+        from sfm.loop_closure import close_loops
+
+        t_lc = time.time()
+        unreg = sorted(set(features.keys()) - set(cameras.keys()))
+        lc_matcher = FeatureMatcher(
+            ratio_threshold=args.ratio, cross_check=True,
+            min_matches=max(8, args.min_matches // 2),
+            workers=args.match_workers, seed=args.seed,
+        )
+        lc_stats = close_loops(
+            cameras, features, all_matches, verified,
+            matcher=lc_matcher, verifier=verifier, K=K, dist_coeffs=dist_coeffs,
+            unregistered=unreg,
+            max_angle_deg=args.loop_max_angle,
+            max_centre_ratio=args.loop_max_centre_ratio,
+            max_pairs=args.loop_max_pairs,
+            relaxed_ratio=min(0.90, args.ratio + 0.10),
+        )
+        stage_times["loop_closure"] = time.time() - t_lc
+        stage_times["loop_closure_stats"] = {
+            k: v for k, v in lc_stats.items() if k != "new_edges"
+        }
+        if lc_stats["verified"]:
+            logger.info(
+                "[LOOP] Re-running reconstruction with %d additional verified "
+                "pairs (%d in total).", lc_stats["verified"], len(verified),
+            )
+            t2 = time.time()
+            sfm2 = _build_sfm(verified, K_initial)
+            try:
+                cams2, pts2, obs2, kp2 = sfm2.reconstruct()
+            except Exception as exc:
+                logger.warning("[LOOP] Second reconstruction failed (%s); "
+                               "keeping the first result.", exc)
+                cams2 = None
+            if cams2 is not None:
+                improved = (len(cams2), len(pts2)) >= (len(cameras), len(points_3d))
+                if improved:
+                    cameras, points_3d, observations, kp_to_3d = cams2, pts2, obs2, kp2
+                    sfm = sfm2
+                    logger.info(
+                        "[LOOP] Second pass kept: %d cameras, %d points.",
+                        len(cameras), len(points_3d),
+                    )
+                else:
+                    logger.info(
+                        "[LOOP] Second pass discarded: %d cameras / %d points "
+                        "did not improve on %d / %d.",
+                        len(cams2), len(pts2), len(cameras), len(points_3d),
+                    )
+            stage_times["reconstruction_pass2"] = time.time() - t2
 
     # Read back refined intrinsics from the SfM object
     K = sfm.K
@@ -1647,6 +1850,14 @@ def main(argv=None) -> int:
     t = time.time()
     exporter = PointCloudExporter(max_reproj_error=args.max_reproj_error)
 
+    # The reprojection error the run advertises is computed *after* this
+    # filter, which removes exactly the observations that disagree.  Both
+    # numbers are therefore kept: the unfiltered one says how consistent the
+    # reconstruction actually is, the filtered one describes what was written
+    # to disk.  Reporting only the second was one of the ways the pipeline
+    # flattered itself (paper_l §6.6).
+    reproj_prefilter = _reprojection_summary(points_3d, observations, cameras, K,
+                                             args.max_reproj_error)
     if not args.no_filter:
         points_3d, observations, _ = exporter.filter_outliers(
             points_3d, observations, cameras, K
@@ -1661,6 +1872,15 @@ def main(argv=None) -> int:
         return 1
 
     stage_times["export"] = time.time() - t
+    if reproj_prefilter:
+        logger.info(
+            "       Reprojection RMSE: %.3f px over all %d observations, "
+            "%.3f px over the %d that survived the export filter",
+            reproj_prefilter["rmse_px"], reproj_prefilter["n_residuals"],
+            _reprojection_summary(points_3d, observations, cameras, K,
+                                  args.max_reproj_error).get("rmse_px", float("nan")),
+            len(observations),
+        )
     logger.info(f"       Done in {time.time()-t:.1f}s")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1699,6 +1919,7 @@ def main(argv=None) -> int:
             image_paths=image_paths_map,
             max_reproj_error=args.max_reproj_error,
             covisibility_counts=_covis_counts,
+            points_3d=points_3d,
         )
 
         if len(dense_pts) > 0:
@@ -1805,6 +2026,8 @@ def main(argv=None) -> int:
                 stage_times,
                 args,
                 focal_curve=focal_curve,
+                focal_source=focal_source,
+                reproj_prefilter=reproj_prefilter,
             )
         except Exception as exc:
             logger.warning("Camera export failed: %s", exc)
